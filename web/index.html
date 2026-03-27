@@ -115,24 +115,44 @@ const statusEl = document.getElementById('status');
 // FM=0, DAB=1, UHF=2
 const bandIdx = fc => fc <= 108 ? 0 : fc <= 240 ? 1 : 2;
 
-function clearRaw() {
-  // Clear only live datasets (indices 3-5) at start of new sweep
-  chart.data.datasets.slice(3).forEach(ds => ds.data = []);
-  chart.update('none');
-}
+// stepSlots[step] = { bi, offset } — records where each step lives in its dataset.
+// Populated on first sweep, reused for in-place overwrite on all subsequent sweeps.
+const stepSlots = {};
 
-function clearAll() {
-  chart.data.datasets.forEach(ds => ds.data = []);
+function applyStep(msg) {
+  const bi       = bandIdx(msg.fc_mhz);
+  const binWidth = 8.0 / msg.power_db.length;
+
+  if (stepSlots[msg.step] === undefined) {
+    // First time — push points and record offset into this band's dataset
+    const offset = chart.data.datasets[bi].data.length;
+    stepSlots[msg.step] = { bi, offset };
+    for (let d = 0; d < msg.power_db.length; d++) {
+      const x = msg.freq_start + (d + 0.5) * binWidth;
+      chart.data.datasets[bi].data.push({ x, y: msg.smooth_db ? msg.smooth_db[d] : msg.power_db[d] });
+      chart.data.datasets[bi + 3].data.push({ x, y: msg.power_db[d] });
+    }
+  } else {
+    // Overwrite in place
+    const { bi: sbi, offset } = stepSlots[msg.step];
+    for (let d = 0; d < msg.power_db.length; d++) {
+      if (msg.smooth_db) chart.data.datasets[sbi].data[offset + d].y = msg.smooth_db[d];
+      chart.data.datasets[sbi + 3].data[offset + d].y = msg.power_db[d];
+    }
+  }
+
   chart.update('none');
+  statusEl.textContent = `scanning… ${msg.progress_pct}%`;
 }
 
 function populateFromSweep(sweep) {
+  // Pre-fill from a completed/in-progress sweep snapshot (on page load)
   const freqs  = sweep.data.frequency_mhz;
   const powers = sweep.data.power_db;
   const smooth = sweep.data.smooth_db;
   for (let i = 0; i < freqs.length; i++) {
     const bi = bandIdx(freqs[i]);
-    if (smooth) chart.data.datasets[bi].data.push({ x: freqs[i], y: smooth[i] });
+    chart.data.datasets[bi].data.push({ x: freqs[i], y: smooth ? smooth[i] : powers[i] });
     chart.data.datasets[bi + 3].data.push({ x: freqs[i], y: powers[i] });
   }
   chart.update('none');
@@ -151,25 +171,14 @@ function openEvents() {
     try { msg = JSON.parse(e.data); } catch { return; }
 
     if (msg.type === 'start') {
-      clearAll();
       statusEl.textContent = 'scanning…';
+      // No clear — step events will overwrite in place
     }
 
-    if (msg.type === 'step') {
-      const bi       = bandIdx(msg.fc_mhz);
-      const binWidth = 8.0 / msg.power_db.length;
-      for (let d = 0; d < msg.power_db.length; d++) {
-        const x = msg.freq_start + (d + 0.5) * binWidth;
-        if (msg.smooth_db) chart.data.datasets[bi].data.push({ x, y: msg.smooth_db[d] });
-        chart.data.datasets[bi + 3].data.push({ x, y: msg.power_db[d] });
-      }
-      chart.update('none');
-      statusEl.textContent = `scanning… ${msg.progress_pct}%`;
-    }
+    if (msg.type === 'step') applyStep(msg);
 
     if (msg.type === 'complete') {
-      statusEl.textContent = 'complete — next sweep starting…';
-      // Stay connected — sweep loops automatically
+      statusEl.textContent = 'complete — continuing…';
     }
   };
 
@@ -190,7 +199,7 @@ function openEvents() {
       const sweep = await (await fetch('/api/sweep')).json();
       if (sweep.data) populateFromSweep(sweep);
       statusEl.textContent = status.state === 'sweeping'
-        ? `scanning… ${status.progress_pct}%` : 'complete — next sweep starting…';
+        ? `scanning… ${status.progress_pct}%` : 'complete — continuing…';
     }
     openEvents();
   } catch (e) {
