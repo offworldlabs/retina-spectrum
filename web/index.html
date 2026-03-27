@@ -1,12 +1,214 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>retina-spectrum</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>retina-spectrum</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #111827;
+    color: #e2e8f0;
+    font-family: 'Courier New', monospace;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 10px 20px;
+    border-bottom: 1px solid #1f2937;
+    flex-shrink: 0;
+  }
+
+  header h1  { font-size: 0.95rem; letter-spacing: 0.15em; color: #94a3b8; }
+  #status    { font-size: 0.8rem; color: #64748b; }
+
+  .legend { display: flex; gap: 16px; margin-left: auto; font-size: 0.78rem; color: #94a3b8; }
+  .legend span { display: flex; align-items: center; gap: 5px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+  #scan-btn {
+    display: none;
+    padding: 4px 12px;
+    background: transparent;
+    border: 1px solid #4fc3f7;
+    color: #4fc3f7;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+  }
+  #scan-btn:hover { background: #4fc3f715; }
+
+  #chart-wrap { flex: 1; padding: 12px 20px 14px; min-height: 0; }
+  canvas { width: 100% !important; height: 100% !important; }
+</style>
 </head>
 <body>
-    <h1>Spectrum Analyser</h1>
-    <p>Phase 1 scaffold — SDR sweep coming soon.</p>
-    <p>FM &bull; VHF &bull; UHF DVB-T</p>
+
+<header>
+  <h1>retina-spectrum</h1>
+  <span id="status">initialising…</span>
+  <button id="scan-btn" onclick="startScan()">scan again</button>
+  <div class="legend">
+    <span><span class="dot" style="background:#4fc3f7"></span>FM 88–108 MHz</span>
+    <span><span class="dot" style="background:#81c784"></span>DAB 174–240 MHz</span>
+    <span><span class="dot" style="background:#ffb74d"></span>UHF 470–694 MHz</span>
+  </div>
+</header>
+
+<div id="chart-wrap">
+  <canvas id="chart"></canvas>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+
+// ── Chart ─────────────────────────────────────────────────────────────────────
+
+Chart.defaults.color = '#64748b';
+
+const chart = new Chart(document.getElementById('chart').getContext('2d'), {
+  type: 'scatter',
+  data: {
+    datasets: [
+      { label: 'FM',  data: [], borderColor: '#4fc3f7', showLine: true, pointRadius: 0, borderWidth: 1.5 },
+      { label: 'DAB', data: [], borderColor: '#81c784', showLine: true, pointRadius: 0, borderWidth: 1.5 },
+      { label: 'UHF', data: [], borderColor: '#ffb74d', showLine: true, pointRadius: 0, borderWidth: 1.5 },
+    ]
+  },
+  options: {
+    animation: false,
+    responsive: true,
+    maintainAspectRatio: false,
+    parsing: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          label: c => `${c.parsed.x.toFixed(2)} MHz  ${c.parsed.y.toFixed(1)} dBfs`
+        }
+      }
+    },
+    scales: {
+      x: {
+        type: 'linear', min: 84, max: 698,
+        title: { display: true, text: 'Frequency (MHz)', color: '#475569', font: { family: 'Courier New', size: 11 } },
+        grid:  { color: '#1f2937' },
+        ticks: { color: '#475569', font: { family: 'Courier New', size: 10 } }
+      },
+      y: {
+        type: 'linear', min: -100, max: 0,
+        title: { display: true, text: 'Power (dBfs)', color: '#475569', font: { family: 'Courier New', size: 11 } },
+        grid:  { color: '#1f2937' },
+        ticks: { color: '#475569', font: { family: 'Courier New', size: 10 }, callback: v => `${v} dB` }
+      }
+    }
+  }
+});
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const statusEl = document.getElementById('status');
+const scanBtn  = document.getElementById('scan-btn');
+
+// Map fc_mhz → dataset index (FM=0, DAB=1, UHF=2)
+const bandIdx = fc => fc <= 108 ? 0 : fc <= 240 ? 1 : 2;
+
+function clearChart() {
+  chart.data.datasets.forEach(ds => ds.data = []);
+  chart.update('none');
+}
+
+function populateFromSweep(sweep) {
+  const freqs  = sweep.data.frequency_mhz;
+  const powers = sweep.data.power_db;
+  for (let i = 0; i < freqs.length; i++)
+    chart.data.datasets[bandIdx(freqs[i])].data.push({ x: freqs[i], y: powers[i] });
+  chart.update('none');
+}
+
+// ── SSE ───────────────────────────────────────────────────────────────────────
+
+let evtSource = null;
+
+function openEvents() {
+  if (evtSource) { evtSource.close(); evtSource = null; }
+  evtSource = new EventSource('/api/events');
+
+  evtSource.onmessage = e => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+
+    if (msg.type === 'step') {
+      // Add 64 points for this 8 MHz slice into the correct band dataset
+      const ds       = chart.data.datasets[bandIdx(msg.fc_mhz)];
+      const binWidth = 8.0 / msg.power_db.length;
+      for (let d = 0; d < msg.power_db.length; d++)
+        ds.data.push({ x: msg.freq_start + (d + 0.5) * binWidth, y: msg.power_db[d] });
+      chart.update('none');
+      statusEl.textContent = `scanning… ${msg.progress_pct}%`;
+    }
+
+    if (msg.type === 'complete') {
+      evtSource.close(); evtSource = null;
+      statusEl.textContent = 'complete';
+      scanBtn.style.display = 'inline';
+    }
+  };
+
+  evtSource.onerror = () => {
+    statusEl.textContent = 'connection lost — reload to retry';
+    if (evtSource) { evtSource.close(); evtSource = null; }
+  };
+}
+
+// ── Scan control ──────────────────────────────────────────────────────────────
+
+async function startScan() {
+  scanBtn.style.display = 'none';
+  clearChart();
+  statusEl.textContent = 'starting…';
+  try {
+    const res = await fetch('/api/start', { method: 'POST' });
+    if (!res.ok && res.status !== 409) { statusEl.textContent = `start failed: ${res.status}`; return; }
+  } catch (e) { statusEl.textContent = `error: ${e.message}`; return; }
+  openEvents();
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+(async () => {
+  try {
+    const status = await (await fetch('/api/status')).json();
+
+    if (status.state === 'sweeping') {
+      // Pre-fill slices already captured before we connected
+      const sweep = await (await fetch('/api/sweep')).json();
+      if (sweep.data) populateFromSweep(sweep);
+      statusEl.textContent = `scanning… ${status.progress_pct}%`;
+      openEvents();
+
+    } else if (status.state === 'complete') {
+      const sweep = await (await fetch('/api/sweep')).json();
+      if (sweep.data) populateFromSweep(sweep);
+      statusEl.textContent = 'complete';
+      scanBtn.style.display = 'inline';
+
+    } else {
+      startScan(); // idle — kick off immediately
+    }
+  } catch (e) {
+    statusEl.textContent = `init error: ${e.message}`;
+  }
+})();
+
+</script>
 </body>
 </html>

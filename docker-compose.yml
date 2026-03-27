@@ -6,7 +6,6 @@ services:
     restart: unless-stopped
     privileged: true          # required for USB SDR access
     volumes:
-      # USB bus — RSPDuo hardware access
-      - /dev/bus/usb:/dev/bus/usb
-      # SDRplay API shared library — installed on host by SDRplay API package
-      - /usr/local/lib/libsdrplay_api.so.3.15:/usr/local/lib/libsdrplay_api.so.3.15
+      # Matched to retina-node docker-compose.yml mount paths
+      - /dev/bus/usb:/dev/bus/usb:rw
+      - /usr/local/lib/libsdrplay_api.so.3.15:/usr/local/lib/libsdrplay_api.so.3:ro
