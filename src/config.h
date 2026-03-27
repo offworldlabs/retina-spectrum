@@ -3,8 +3,8 @@
 // DSP
 #define N_FFT           8192    // samples per FFT (~977 Hz/bin at 8 MHz fs)
 #define N_DISPLAY       64      // display bins per step (125 kHz/bin)
-#define N_AVG           4       // FFT averages per step — reduces noise variance ~6 dB
-#define EMA_ALPHA       0.3f    // sweep-to-sweep EMA weight for new data (0=frozen, 1=no smoothing)
+#define N_AVG           8       // FFT averages per step — reduces noise variance ~9 dB
+#define EMA_ALPHA       0.05f   // sweep-to-sweep EMA — ~20 sweeps to converge to flat noise floor
 
 // SDR
 #define SAMPLE_RATE_HZ      8000000

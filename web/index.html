@@ -69,13 +69,13 @@ const chart = new Chart(document.getElementById('chart').getContext('2d'), {
   data: {
     datasets: [
       // smooth (averaged) — solid, full brightness
-      { label: 'FM avg',  data: [], borderColor: COLORS[0], showLine: true, pointRadius: 0, borderWidth: 1.5, borderDash: [] },
-      { label: 'DAB avg', data: [], borderColor: COLORS[1], showLine: true, pointRadius: 0, borderWidth: 1.5, borderDash: [] },
-      { label: 'UHF avg', data: [], borderColor: COLORS[2], showLine: true, pointRadius: 0, borderWidth: 1.5, borderDash: [] },
-      // raw (live sweep) — dim dotted
-      { label: 'FM live',  data: [], borderColor: COLORS[0] + '55', showLine: true, pointRadius: 0, borderWidth: 1, borderDash: [2, 3] },
-      { label: 'DAB live', data: [], borderColor: COLORS[1] + '55', showLine: true, pointRadius: 0, borderWidth: 1, borderDash: [2, 3] },
-      { label: 'UHF live', data: [], borderColor: COLORS[2] + '55', showLine: true, pointRadius: 0, borderWidth: 1, borderDash: [2, 3] },
+      { label: 'FM avg',  data: [], borderColor: COLORS[0], showLine: true, pointRadius: 0, borderWidth: 2, borderDash: [] },
+      { label: 'DAB avg', data: [], borderColor: COLORS[1], showLine: true, pointRadius: 0, borderWidth: 2, borderDash: [] },
+      { label: 'UHF avg', data: [], borderColor: COLORS[2], showLine: true, pointRadius: 0, borderWidth: 2, borderDash: [] },
+      // raw (live sweep) — very dim, just to show current pass
+      { label: 'FM live',  data: [], borderColor: COLORS[0] + '22', showLine: true, pointRadius: 0, borderWidth: 1, borderDash: [2, 4] },
+      { label: 'DAB live', data: [], borderColor: COLORS[1] + '22', showLine: true, pointRadius: 0, borderWidth: 1, borderDash: [2, 4] },
+      { label: 'UHF live', data: [], borderColor: COLORS[2] + '22', showLine: true, pointRadius: 0, borderWidth: 1, borderDash: [2, 4] },
     ]
   },
   options: {
@@ -99,7 +99,7 @@ const chart = new Chart(document.getElementById('chart').getContext('2d'), {
         ticks: { color: '#475569', font: { family: 'Courier New', size: 10 } }
       },
       y: {
-        type: 'linear', min: -100, max: -10,
+        type: 'linear', min: -90, max: -20,
         title: { display: true, text: 'Power (dBfs)', color: '#475569', font: { family: 'Courier New', size: 11 } },
         grid:  { color: '#1f2937' },
         ticks: { color: '#475569', font: { family: 'Courier New', size: 10 }, callback: v => `${v} dB` }
