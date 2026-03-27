@@ -1,11 +1,12 @@
 services:
   retina-spectrum:
     build: .
-    ports:
-      - "3020:3020"
     restart: unless-stopped
+    network_mode: host        # SDRplay API uses host shared memory — matches blah2. Port 3020 on host directly.
+    pid: "host"               # required for SDRplay service access — matches blah2
     privileged: true          # required for USB SDR access
     volumes:
-      # Matched to retina-node docker-compose.yml mount paths
+      # Matched exactly to retina-node docker-compose.yml
+      - /dev/shm:/dev/shm:rw
       - /dev/bus/usb:/dev/bus/usb:rw
       - /usr/local/lib/libsdrplay_api.so.3.15:/usr/local/lib/libsdrplay_api.so.3:ro
