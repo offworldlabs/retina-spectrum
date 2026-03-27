@@ -94,7 +94,7 @@ std::array<float, N_DISPLAY> process_step(
     for (int d = 0; d < N_DISPLAY; d++)
     {
         float p = display[d] / norm;
-        display[d] = (p > 0.0f) ? 10.0f * std::log10f(p) : -120.0f;
+        display[d] = (p > 0.0f) ? 10.0f * log10f(p) : -120.0f;
     }
 
     return display;

@@ -11,9 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# sdrplay_api.h needed at compile time — bind-mounted .so at runtime
-# The header ships with the SDRplay API installer; copy from host build context
-COPY lib/sdrplay_api.h /usr/local/include/sdrplay_api.h
+# SDRplay API headers needed at compile time — .so bind-mounted from host at runtime
+COPY lib/ /usr/local/include/
 
 WORKDIR /app
 COPY CMakeLists.txt .
