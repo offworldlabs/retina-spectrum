@@ -151,8 +151,7 @@ function openEvents() {
     try { msg = JSON.parse(e.data); } catch { return; }
 
     if (msg.type === 'start') {
-      // New sweep beginning — clear raw layer, keep smooth
-      clearRaw();
+      clearAll();
       statusEl.textContent = 'scanning…';
     }
 
