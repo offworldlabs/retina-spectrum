@@ -145,19 +145,6 @@ function applyStep(msg) {
   statusEl.textContent = `scanning… ${msg.progress_pct}%`;
 }
 
-function populateFromSweep(sweep) {
-  // Pre-fill from a completed/in-progress sweep snapshot (on page load)
-  const freqs  = sweep.data.frequency_mhz;
-  const powers = sweep.data.power_db;
-  const smooth = sweep.data.smooth_db;
-  for (let i = 0; i < freqs.length; i++) {
-    const bi = bandIdx(freqs[i]);
-    chart.data.datasets[bi].data.push({ x: freqs[i], y: smooth ? smooth[i] : powers[i] });
-    chart.data.datasets[bi + 3].data.push({ x: freqs[i], y: powers[i] });
-  }
-  chart.update('none');
-}
-
 // ── SSE ───────────────────────────────────────────────────────────────────────
 
 let evtSource = null;
@@ -192,19 +179,7 @@ function openEvents() {
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 (async () => {
-  try {
-    const status = await (await fetch('/api/status')).json();
-
-    if (status.state === 'sweeping' || status.state === 'complete') {
-      const sweep = await (await fetch('/api/sweep')).json();
-      if (sweep.data) populateFromSweep(sweep);
-      statusEl.textContent = status.state === 'sweeping'
-        ? `scanning… ${status.progress_pct}%` : 'complete — continuing…';
-    }
-    openEvents();
-  } catch (e) {
-    statusEl.textContent = `init error: ${e.message}`;
-  }
+  openEvents();
 })();
 
 </script>
