@@ -55,8 +55,8 @@ std::array<float, N_DISPLAY> process_step(
     // ── 1. Load samples + apply Hanning window ────────────────────────────────
     for (int n = 0; n < N_FFT; n++)
     {
-        s_fft_buf[n][0] = samples[n].real() * s_window[n];
-        s_fft_buf[n][1] = samples[n].imag() * s_window[n];
+        s_fft_buf[n][0] = (samples[n].real() / 32768.0f) * s_window[n];
+        s_fft_buf[n][1] = (samples[n].imag() / 32768.0f) * s_window[n];
     }
 
     // ── 2. FFT ────────────────────────────────────────────────────────────────
