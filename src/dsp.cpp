@@ -52,48 +52,50 @@ std::array<float, N_DISPLAY> process_step(
 
     if (!s_init) dsp_init();
 
-    // ── 1. Load samples + apply Hanning window ────────────────────────────────
-    for (int n = 0; n < N_FFT; n++)
-    {
-        s_fft_buf[n][0] = (samples[n].real() / 32768.0f) * s_window[n];
-        s_fft_buf[n][1] = (samples[n].imag() / 32768.0f) * s_window[n];
-    }
-
-    // ── 2. FFT ────────────────────────────────────────────────────────────────
-    fftwf_execute(s_plan);
-
-    // ── 3. fftshift — verbatim from blah2 SpectrumAnalyser.cpp ───────────────
-    //    (k + nfft/2 + 1) % nfft  maps output so DC is centred
+    constexpr int GROUP = N_FFT / N_DISPLAY;
     float linear[N_FFT];
-    for (int k = 0; k < N_FFT; k++)
-    {
-        int ks = (k + N_FFT / 2 + 1) % N_FFT;
-        float re = s_fft_buf[ks][0];
-        float im = s_fft_buf[ks][1];
+    std::array<float, N_DISPLAY> acc{};  // linear power accumulator across N_AVG FFTs
 
-        // ── 4. Magnitude squared — stay in LINEAR power domain ───────────────
-        linear[k] = re * re + im * im;
+    for (int avg = 0; avg < N_AVG; avg++)
+    {
+        int offset = avg * N_FFT;
+
+        // ── 1. Load samples + apply Hanning window ────────────────────────
+        for (int n = 0; n < N_FFT; n++)
+        {
+            s_fft_buf[n][0] = (samples[offset + n].real() / 32768.0f) * s_window[n];
+            s_fft_buf[n][1] = (samples[offset + n].imag() / 32768.0f) * s_window[n];
+        }
+
+        // ── 2. FFT ────────────────────────────────────────────────────────
+        fftwf_execute(s_plan);
+
+        // ── 3. fftshift + magnitude squared ──────────────────────────────
+        for (int k = 0; k < N_FFT; k++)
+        {
+            int ks = (k + N_FFT / 2 + 1) % N_FFT;
+            float re = s_fft_buf[ks][0];
+            float im = s_fft_buf[ks][1];
+            linear[k] = re * re + im * im;
+        }
+
+        // ── 4. Decimate: sum linear-power bins → display bins ────────────
+        for (int d = 0; d < N_DISPLAY; d++)
+        {
+            float sum = 0.0f;
+            for (int g = 0; g < GROUP; g++)
+                sum += linear[d * GROUP + g];
+            acc[d] += sum / GROUP;
+        }
     }
 
-    // ── 5. Decimate: average N_FFT/N_DISPLAY linear-power bins → 1 display bin
-    //    Must stay linear here — averaging dB values is wrong
-    constexpr int GROUP = N_FFT / N_DISPLAY; // = 128
+    // ── 5. Average across N_AVG FFTs, then dBFS ──────────────────────────────
+    //    dBFS = 10*log10(power / N_FFT²),  norm accounts for FFT scaling
+    const float norm = (float)N_FFT * (float)N_FFT;
     std::array<float, N_DISPLAY> display;
     for (int d = 0; d < N_DISPLAY; d++)
     {
-        float sum = 0.0f;
-        for (int g = 0; g < GROUP; g++)
-            sum += linear[d * GROUP + g];
-        display[d] = sum / GROUP;
-    }
-
-    // ── 6. dBFS conversion LAST ───────────────────────────────────────────────
-    //    power = |X[k]|²,  dBFS = 10*log10(power / N_FFT²)
-    //    equivalent to 20*log10(|X[k]| / N_FFT)
-    const float norm = (float)N_FFT * (float)N_FFT;
-    for (int d = 0; d < N_DISPLAY; d++)
-    {
-        float p = display[d] / norm;
+        float p = (acc[d] / N_AVG) / norm;
         display[d] = (p > 0.0f) ? 10.0f * log10f(p) : -120.0f;
     }
 

@@ -203,7 +203,7 @@ void stream_a_callback_impl(short *xi, short *xq,
     for (unsigned int i = 0; i < numSamples; i++)
         g_capture_buf.push_back({(float)xi[i], (float)xq[i]});
 
-    if ((int)g_capture_buf.size() >= N_FFT)
+    if ((int)g_capture_buf.size() >= N_FFT * N_AVG)
         g_capture_done = true;
 }
 

@@ -54,7 +54,8 @@ struct Slice {
     float fc_mhz         = 0;
     float freq_start_mhz = 0;
     float freq_stop_mhz  = 0;
-    std::array<float, N_DISPLAY> power_db{};
+    std::array<float, N_DISPLAY> power_db{};   // raw (current sweep)
+    std::array<float, N_DISPLAY> smooth_db{};  // EMA-smoothed
     bool  valid          = false;
 };
 
@@ -110,21 +111,28 @@ static std::string       g_web_dir = "/web";
 
 // ── SSE helpers ───────────────────────────────────────────────────────────────
 
+static void append_array(std::ostringstream& ss, const std::array<float, N_DISPLAY>& arr)
+{
+    ss << '[';
+    for (int d = 0; d < N_DISPLAY; d++) {
+        if (d) ss << ',';
+        ss << arr[d];
+    }
+    ss << ']';
+}
+
 static std::string slice_to_sse(int step, const Slice& sl, int pct)
 {
     std::ostringstream ss;
     ss << "data: {\"type\":\"step\""
-       << ",\"step\":"        << step
-       << ",\"fc_mhz\":"      << sl.fc_mhz
-       << ",\"freq_start\":"  << sl.freq_start_mhz
-       << ",\"freq_stop\":"   << sl.freq_stop_mhz
+       << ",\"step\":"         << step
+       << ",\"fc_mhz\":"       << sl.fc_mhz
+       << ",\"freq_start\":"   << sl.freq_start_mhz
+       << ",\"freq_stop\":"    << sl.freq_stop_mhz
        << ",\"progress_pct\":" << pct
-       << ",\"power_db\":[";
-    for (int d = 0; d < N_DISPLAY; d++) {
-        if (d) ss << ',';
-        ss << sl.power_db[d];
-    }
-    ss << "]}\n\n";
+       << ",\"power_db\":";   append_array(ss, sl.power_db);
+    ss << ",\"smooth_db\":";  append_array(ss, sl.smooth_db);
+    ss << "}\n\n";
     return ss.str();
 }
 
@@ -182,80 +190,94 @@ static void sweep_fn()
     auto steps = build_steps();
     int  total = (int)steps.size();
 
+    // EMA state — persists across sweeps, reset if step count changes
+    std::vector<std::array<float, N_DISPLAY>> ema(total);
+    bool ema_valid = false;
+
+    while (true)  // continuous sweep loop
     {
-        std::lock_guard<std::mutex> lk(g_state.mtx);
-        g_state.state        = "sweeping";
-        g_state.progress_pct = 0;
-        g_state.buffer.assign(total, Slice{});
-    }
-
-    for (int i = 0; i < total; i++)
-    {
-        float       fc_mhz = steps[i].fc_mhz;
-        const char *band   = steps[i].band;
-        std::cerr << "[sweep] step " << (i+1) << "/" << total
-                  << "  fc=" << fc_mhz << " MHz  band=" << band << std::endl;
-
-        std::array<float, N_DISPLAY> power;
-
-        if (g_mock)
-        {
-            std::this_thread::sleep_for(std::chrono::milliseconds(30)); // simulate dwell
-            power = mock_step(fc_mhz);
-        }
-        else
-        {
-            // Retune — sets g_waiting_reset=true, no sleep
-            retune((double)fc_mhz * 1e6);
-
-            // Wait for reset flag then N_FFT samples, with timeout
-            auto deadline = std::chrono::steady_clock::now()
-                          + std::chrono::milliseconds(RESET_TIMEOUT_MS);
-            while (!g_capture_done)
-            {
-                if (std::chrono::steady_clock::now() > deadline)
-                {
-                    std::cerr << "[sweep] WARN: timeout waiting for reset/capture at "
-                              << fc_mhz << " MHz — skipping step" << std::endl;
-                    break;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
-
-            if (!g_capture_done)
-                continue;  // skip this step, move on
-
-            std::cerr << "[sweep] captured " << g_capture_buf.size()
-                      << " samples at " << fc_mhz << " MHz" << std::endl;
-
-            power = process_step(fc_mhz, g_capture_buf);
-        }
-
-        Slice sl;
-        sl.fc_mhz         = fc_mhz;
-        sl.freq_start_mhz = fc_mhz - 4.0f;
-        sl.freq_stop_mhz  = fc_mhz + 4.0f;
-        sl.power_db       = power;
-        sl.valid          = true;
-
-        int pct = (i + 1) * 100 / total;
         {
             std::lock_guard<std::mutex> lk(g_state.mtx);
-            g_state.buffer[i]    = sl;
-            g_state.progress_pct = pct;
+            g_state.state        = "sweeping";
+            g_state.progress_pct = 0;
+            g_state.buffer.assign(total, Slice{});
+        }
+        sse_broadcast("data: {\"type\":\"start\"}\n\n");
+
+        for (int i = 0; i < total; i++)
+        {
+            float       fc_mhz = steps[i].fc_mhz;
+            const char *band   = steps[i].band;
+            std::cerr << "[sweep] step " << (i+1) << "/" << total
+                      << "  fc=" << fc_mhz << " MHz  band=" << band << std::endl;
+
+            std::array<float, N_DISPLAY> power;
+
+            if (g_mock)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(30));
+                power = mock_step(fc_mhz);
+            }
+            else
+            {
+                retune((double)fc_mhz * 1e6);
+
+                auto deadline = std::chrono::steady_clock::now()
+                              + std::chrono::milliseconds(RESET_TIMEOUT_MS);
+                while (!g_capture_done)
+                {
+                    if (std::chrono::steady_clock::now() > deadline)
+                    {
+                        std::cerr << "[sweep] WARN: timeout at " << fc_mhz << " MHz — skipping" << std::endl;
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+
+                if (!g_capture_done)
+                    continue;
+
+                std::cerr << "[sweep] captured " << g_capture_buf.size()
+                          << " samples at " << fc_mhz << " MHz" << std::endl;
+
+                power = process_step(fc_mhz, g_capture_buf);
+            }
+
+            // EMA blend — smooth_db tracks weighted history, power_db is raw
+            if (ema_valid)
+                for (int d = 0; d < N_DISPLAY; d++)
+                    ema[i][d] = EMA_ALPHA * power[d] + (1.0f - EMA_ALPHA) * ema[i][d];
+            else
+                ema[i] = power;  // first sweep: seed with raw
+
+            Slice sl;
+            sl.fc_mhz         = fc_mhz;
+            sl.freq_start_mhz = fc_mhz - 4.0f;
+            sl.freq_stop_mhz  = fc_mhz + 4.0f;
+            sl.power_db       = power;
+            sl.smooth_db      = ema[i];
+            sl.valid          = true;
+
+            int pct = (i + 1) * 100 / total;
+            {
+                std::lock_guard<std::mutex> lk(g_state.mtx);
+                g_state.buffer[i]    = sl;
+                g_state.progress_pct = pct;
+            }
+
+            sse_broadcast(slice_to_sse(i, sl, pct));
         }
 
-        sse_broadcast(slice_to_sse(i, sl, pct));
-    }
+        ema_valid = true;  // from second sweep onwards, EMA has history
 
-    {
-        std::lock_guard<std::mutex> lk(g_state.mtx);
-        g_state.state = "complete";
+        {
+            std::lock_guard<std::mutex> lk(g_state.mtx);
+            g_state.state = "complete";
+        }
+        std::cerr << "[sweep] complete" << std::endl;
+        sse_broadcast("data: {\"type\":\"complete\"}\n\n");
+        // SSE clients stay connected — next iteration sends "start" then new steps
     }
-    std::cerr << "[sweep] complete" << std::endl;
-
-    sse_broadcast("data: {\"type\":\"complete\"}\n\n");
-    sse_close_all();
 }
 
 static bool start_sweep()
@@ -277,22 +299,24 @@ static bool start_sweep()
 static std::string build_sweep_json()
 {
     std::lock_guard<std::mutex> lk(g_state.mtx);
-    std::ostringstream freq_arr, power_arr;
+    std::ostringstream freq_arr, power_arr, smooth_arr;
     bool first = true;
     for (auto& sl : g_state.buffer) {
         if (!sl.valid) continue;
         auto freqs = freq_axis(sl.fc_mhz);
         for (int d = 0; d < N_DISPLAY; d++) {
-            if (!first) { freq_arr << ','; power_arr << ','; }
+            if (!first) { freq_arr << ','; power_arr << ','; smooth_arr << ','; }
             freq_arr  << freqs[d];
             power_arr << sl.power_db[d];
+            smooth_arr << sl.smooth_db[d];
             first = false;
         }
     }
     std::ostringstream ss;
     ss << "{\"state\":\"" << g_state.state << "\""
-       << ",\"data\":{\"frequency_mhz\":[" << freq_arr.str() << "]"
-       << ",\"power_db\":["                 << power_arr.str() << "]}}";
+       << ",\"data\":{\"frequency_mhz\":[" << freq_arr.str()  << "]"
+       << ",\"power_db\":["                 << power_arr.str() << "]"
+       << ",\"smooth_db\":["                << smooth_arr.str() << "]}}";
     return ss.str();
 }
 

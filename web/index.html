@@ -33,19 +33,6 @@
   .legend span { display: flex; align-items: center; gap: 5px; }
   .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 
-  #scan-btn {
-    display: none;
-    padding: 4px 12px;
-    background: transparent;
-    border: 1px solid #4fc3f7;
-    color: #4fc3f7;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 0.78rem;
-    letter-spacing: 0.08em;
-  }
-  #scan-btn:hover { background: #4fc3f715; }
-
   #chart-wrap { flex: 1; padding: 12px 20px 14px; min-height: 0; }
   canvas { width: 100% !important; height: 100% !important; }
 </style>
@@ -55,11 +42,11 @@
 <header>
   <h1>retina-spectrum</h1>
   <span id="status">initialising…</span>
-  <button id="scan-btn" onclick="startScan()">scan again</button>
   <div class="legend">
     <span><span class="dot" style="background:#4fc3f7"></span>FM 88–108 MHz</span>
     <span><span class="dot" style="background:#81c784"></span>DAB 174–240 MHz</span>
     <span><span class="dot" style="background:#ffb74d"></span>UHF 470–694 MHz</span>
+    <span style="color:#475569">— avg  ··· live</span>
   </div>
 </header>
 
@@ -70,17 +57,25 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
 
-// ── Chart ─────────────────────────────────────────────────────────────────────
+// ── Chart — 6 datasets: [FM-smooth, DAB-smooth, UHF-smooth, FM-raw, DAB-raw, UHF-raw]
+//   Smooth = solid bright line; Raw = dim dotted line
 
 Chart.defaults.color = '#64748b';
+
+const COLORS = ['#4fc3f7', '#81c784', '#ffb74d'];
 
 const chart = new Chart(document.getElementById('chart').getContext('2d'), {
   type: 'scatter',
   data: {
     datasets: [
-      { label: 'FM',  data: [], borderColor: '#4fc3f7', showLine: true, pointRadius: 0, borderWidth: 1.5 },
-      { label: 'DAB', data: [], borderColor: '#81c784', showLine: true, pointRadius: 0, borderWidth: 1.5 },
-      { label: 'UHF', data: [], borderColor: '#ffb74d', showLine: true, pointRadius: 0, borderWidth: 1.5 },
+      // smooth (averaged) — solid, full brightness
+      { label: 'FM avg',  data: [], borderColor: COLORS[0], showLine: true, pointRadius: 0, borderWidth: 1.5, borderDash: [] },
+      { label: 'DAB avg', data: [], borderColor: COLORS[1], showLine: true, pointRadius: 0, borderWidth: 1.5, borderDash: [] },
+      { label: 'UHF avg', data: [], borderColor: COLORS[2], showLine: true, pointRadius: 0, borderWidth: 1.5, borderDash: [] },
+      // raw (live sweep) — dim dotted
+      { label: 'FM live',  data: [], borderColor: COLORS[0] + '55', showLine: true, pointRadius: 0, borderWidth: 1, borderDash: [2, 3] },
+      { label: 'DAB live', data: [], borderColor: COLORS[1] + '55', showLine: true, pointRadius: 0, borderWidth: 1, borderDash: [2, 3] },
+      { label: 'UHF live', data: [], borderColor: COLORS[2] + '55', showLine: true, pointRadius: 0, borderWidth: 1, borderDash: [2, 3] },
     ]
   },
   options: {
@@ -104,7 +99,7 @@ const chart = new Chart(document.getElementById('chart').getContext('2d'), {
         ticks: { color: '#475569', font: { family: 'Courier New', size: 10 } }
       },
       y: {
-        type: 'linear', min: -100, max: 0,
+        type: 'linear', min: -100, max: -10,
         title: { display: true, text: 'Power (dBfs)', color: '#475569', font: { family: 'Courier New', size: 11 } },
         grid:  { color: '#1f2937' },
         ticks: { color: '#475569', font: { family: 'Courier New', size: 10 }, callback: v => `${v} dB` }
@@ -116,12 +111,17 @@ const chart = new Chart(document.getElementById('chart').getContext('2d'), {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const statusEl = document.getElementById('status');
-const scanBtn  = document.getElementById('scan-btn');
 
-// Map fc_mhz → dataset index (FM=0, DAB=1, UHF=2)
+// FM=0, DAB=1, UHF=2
 const bandIdx = fc => fc <= 108 ? 0 : fc <= 240 ? 1 : 2;
 
-function clearChart() {
+function clearRaw() {
+  // Clear only live datasets (indices 3-5) at start of new sweep
+  chart.data.datasets.slice(3).forEach(ds => ds.data = []);
+  chart.update('none');
+}
+
+function clearAll() {
   chart.data.datasets.forEach(ds => ds.data = []);
   chart.update('none');
 }
@@ -129,8 +129,12 @@ function clearChart() {
 function populateFromSweep(sweep) {
   const freqs  = sweep.data.frequency_mhz;
   const powers = sweep.data.power_db;
-  for (let i = 0; i < freqs.length; i++)
-    chart.data.datasets[bandIdx(freqs[i])].data.push({ x: freqs[i], y: powers[i] });
+  const smooth = sweep.data.smooth_db;
+  for (let i = 0; i < freqs.length; i++) {
+    const bi = bandIdx(freqs[i]);
+    if (smooth) chart.data.datasets[bi].data.push({ x: freqs[i], y: smooth[i] });
+    chart.data.datasets[bi + 3].data.push({ x: freqs[i], y: powers[i] });
+  }
   chart.update('none');
 }
 
@@ -146,40 +150,35 @@ function openEvents() {
     let msg;
     try { msg = JSON.parse(e.data); } catch { return; }
 
+    if (msg.type === 'start') {
+      // New sweep beginning — clear raw layer, keep smooth
+      clearRaw();
+      statusEl.textContent = 'scanning…';
+    }
+
     if (msg.type === 'step') {
-      // Add 64 points for this 8 MHz slice into the correct band dataset
-      const ds       = chart.data.datasets[bandIdx(msg.fc_mhz)];
+      const bi       = bandIdx(msg.fc_mhz);
       const binWidth = 8.0 / msg.power_db.length;
-      for (let d = 0; d < msg.power_db.length; d++)
-        ds.data.push({ x: msg.freq_start + (d + 0.5) * binWidth, y: msg.power_db[d] });
+      for (let d = 0; d < msg.power_db.length; d++) {
+        const x = msg.freq_start + (d + 0.5) * binWidth;
+        if (msg.smooth_db) chart.data.datasets[bi].data.push({ x, y: msg.smooth_db[d] });
+        chart.data.datasets[bi + 3].data.push({ x, y: msg.power_db[d] });
+      }
       chart.update('none');
       statusEl.textContent = `scanning… ${msg.progress_pct}%`;
     }
 
     if (msg.type === 'complete') {
-      evtSource.close(); evtSource = null;
-      statusEl.textContent = 'complete';
-      scanBtn.style.display = 'inline';
+      statusEl.textContent = 'complete — next sweep starting…';
+      // Stay connected — sweep loops automatically
     }
   };
 
   evtSource.onerror = () => {
-    statusEl.textContent = 'connection lost — reload to retry';
+    statusEl.textContent = 'connection lost — retrying…';
     if (evtSource) { evtSource.close(); evtSource = null; }
+    setTimeout(openEvents, 3000);
   };
-}
-
-// ── Scan control ──────────────────────────────────────────────────────────────
-
-async function startScan() {
-  scanBtn.style.display = 'none';
-  clearChart();
-  statusEl.textContent = 'starting…';
-  try {
-    const res = await fetch('/api/start', { method: 'POST' });
-    if (!res.ok && res.status !== 409) { statusEl.textContent = `start failed: ${res.status}`; return; }
-  } catch (e) { statusEl.textContent = `error: ${e.message}`; return; }
-  openEvents();
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
@@ -188,22 +187,13 @@ async function startScan() {
   try {
     const status = await (await fetch('/api/status')).json();
 
-    if (status.state === 'sweeping') {
-      // Pre-fill slices already captured before we connected
+    if (status.state === 'sweeping' || status.state === 'complete') {
       const sweep = await (await fetch('/api/sweep')).json();
       if (sweep.data) populateFromSweep(sweep);
-      statusEl.textContent = `scanning… ${status.progress_pct}%`;
-      openEvents();
-
-    } else if (status.state === 'complete') {
-      const sweep = await (await fetch('/api/sweep')).json();
-      if (sweep.data) populateFromSweep(sweep);
-      statusEl.textContent = 'complete';
-      scanBtn.style.display = 'inline';
-
-    } else {
-      startScan(); // idle — kick off immediately
+      statusEl.textContent = status.state === 'sweeping'
+        ? `scanning… ${status.progress_pct}%` : 'complete — next sweep starting…';
     }
+    openEvents();
   } catch (e) {
     statusEl.textContent = `init error: ${e.message}`;
   }
