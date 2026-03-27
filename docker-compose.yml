@@ -2,5 +2,11 @@ services:
   retina-spectrum:
     build: .
     ports:
-      - "3020:80"
+      - "3020:3020"
     restart: unless-stopped
+    privileged: true          # required for USB SDR access
+    volumes:
+      # USB bus — RSPDuo hardware access
+      - /dev/bus/usb:/dev/bus/usb
+      # SDRplay API shared library — installed on host by SDRplay API package
+      - /usr/local/lib/libsdrplay_api.so.3.15:/usr/local/lib/libsdrplay_api.so.3.15
