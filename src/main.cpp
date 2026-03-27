@@ -31,10 +31,10 @@ struct Band { const char *name; int start_mhz; int stop_mhz; int step_mhz; };
 
 // Integer MHz to avoid float comparison issues in loop bounds
 static const Band BANDS[] = {
-    {"fm",   88,  104,  8},   //  3 steps: 88, 96, 104  (covers 84–108 MHz)
-    {"dab", 174,  238,  8},   //  9 steps: 174..238     (covers 170–242 MHz)
-    {"uhf", 470,  690,  8},   // 28 steps: 470..690     (covers 466–694 MHz)
-};
+    {"fm",   88,  104,  4},   //  5 steps: 88..104  (covers 86–106 MHz centre ±2)
+    {"dab", 174,  238,  4},   // 17 steps: 174..238 (covers 172–240 MHz centre ±2)
+    {"uhf", 470,  690,  4},   // 56 steps: 470..690 (covers 468–692 MHz centre ±2)
+};                            // 78 steps — only centre 32/64 bins served; no step-edge dips
 
 struct Step { float fc_mhz; const char *band; };
 
@@ -111,11 +111,18 @@ static std::string       g_web_dir = "/web";
 
 // ── SSE helpers ───────────────────────────────────────────────────────────────
 
-static void append_array(std::ostringstream& ss, const std::array<float, N_DISPLAY>& arr)
+// Only output the centre 32 bins (d=16..47) of the 64-bin FFT.
+// These bins fall within ±2 MHz of the step centre where the Hanning window
+// is flat enough (≥ -3 dB). With 4 MHz steps the ranges tile without overlap.
+static constexpr int TRIM_LO  = 16;
+static constexpr int TRIM_HI  = 48;   // exclusive
+static constexpr int TRIM_N   = TRIM_HI - TRIM_LO;  // = 32
+
+static void append_centre(std::ostringstream& ss, const std::array<float, N_DISPLAY>& arr)
 {
     ss << '[';
-    for (int d = 0; d < N_DISPLAY; d++) {
-        if (d) ss << ',';
+    for (int d = TRIM_LO; d < TRIM_HI; d++) {
+        if (d > TRIM_LO) ss << ',';
         ss << arr[d];
     }
     ss << ']';
@@ -127,11 +134,11 @@ static std::string slice_to_sse(int step, const Slice& sl, int pct)
     ss << "data: {\"type\":\"step\""
        << ",\"step\":"         << step
        << ",\"fc_mhz\":"       << sl.fc_mhz
-       << ",\"freq_start\":"   << sl.freq_start_mhz
-       << ",\"freq_stop\":"    << sl.freq_stop_mhz
+       << ",\"freq_start\":"   << (sl.fc_mhz - 2.0f)   // centre ±2 MHz only
+       << ",\"freq_stop\":"    << (sl.fc_mhz + 2.0f)
        << ",\"progress_pct\":" << pct
-       << ",\"power_db\":";   append_array(ss, sl.power_db);
-    ss << ",\"smooth_db\":";  append_array(ss, sl.smooth_db);
+       << ",\"power_db\":";   append_centre(ss, sl.power_db);
+    ss << ",\"smooth_db\":";  append_centre(ss, sl.smooth_db);
     ss << "}\n\n";
     return ss.str();
 }
@@ -304,10 +311,11 @@ static std::string build_sweep_json()
     for (auto& sl : g_state.buffer) {
         if (!sl.valid) continue;
         auto freqs = freq_axis(sl.fc_mhz);
-        for (int d = 0; d < N_DISPLAY; d++) {
+        // Centre bins only — matches what SSE sends
+        for (int d = TRIM_LO; d < TRIM_HI; d++) {
             if (!first) { freq_arr << ','; power_arr << ','; smooth_arr << ','; }
-            freq_arr  << freqs[d];
-            power_arr << sl.power_db[d];
+            freq_arr   << freqs[d];
+            power_arr  << sl.power_db[d];
             smooth_arr << sl.smooth_db[d];
             first = false;
         }

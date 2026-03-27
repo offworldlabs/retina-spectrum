@@ -121,7 +121,7 @@ const stepSlots = {};
 
 function applyStep(msg) {
   const bi       = bandIdx(msg.fc_mhz);
-  const binWidth = 8.0 / msg.power_db.length;
+  const binWidth = (msg.freq_stop - msg.freq_start) / msg.power_db.length;
 
   if (stepSlots[msg.step] === undefined) {
     // First time — push points and record offset into this band's dataset
