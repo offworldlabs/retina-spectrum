@@ -11,8 +11,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# SDRplay API headers needed at compile time — .so bind-mounted from host at runtime
-COPY lib/ /usr/local/include/
+# SDRplay API — same install pattern as blah2-arm Dockerfile
+# Headers → /usr/local/include, arm64 .so → /usr/local/lib (matches blah2)
+COPY lib/*.h /usr/local/include/
+COPY lib/arm64/libsdrplay_api.so.3.15 /usr/local/lib/libsdrplay_api.so.3.15
+RUN chmod 644 /usr/local/lib/libsdrplay_api.so.3.15 && \
+    ln -s libsdrplay_api.so.3.15 /usr/local/lib/libsdrplay_api.so.3 && \
+    ln -s libsdrplay_api.so.3.15 /usr/local/lib/libsdrplay_api.so && \
+    ldconfig
 
 WORKDIR /app
 COPY CMakeLists.txt .
