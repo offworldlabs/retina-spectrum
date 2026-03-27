@@ -192,6 +192,7 @@ void stream_a_callback_impl(short *xi, short *xq,
         g_capture_buf.clear();
         g_waiting_reset = false;            // PLL locked, new frequency valid
         std::cerr << "[sdr] reset received — capturing" << std::endl;
+        return;                             // skip this callback's samples — may be transitional
     }
 
     if (g_capture_done) return;
