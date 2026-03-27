@@ -2,8 +2,8 @@
 // Changes from blah2:
 //   get_device()          — Tuner_Both/Dual_Tuner → g_tuner/Single_Tuner
 //   set_device_parameters() — BW_8_000, IF_Zero, decimation off, notches off, AGC 50Hz hardcoded
-//   stream_a_callback_impl  — gutted dual-channel interleave, reset-aware single accumulator
-//   retune()               — new: sdrplay_api_Update + sets g_waiting_reset (no fixed sleep)
+//   stream_a_callback_impl  — gutted dual-channel interleave, rfChanged-aware single accumulator
+//   retune()               — new: sdrplay_api_Update + sets g_waiting_rf_change (no fixed sleep)
 // Verbatim from blah2: open_api(), event_callback_impl(), initialise_device(), uninitialise_device()
 
 #include "sdr.h"
@@ -26,7 +26,7 @@ sdrplay_api_TunerSelectT    g_tuner = sdrplay_api_Tuner_A;
 // Capture state
 std::vector<std::complex<float>> g_capture_buf;
 std::atomic<bool>                g_capture_done{false};
-std::atomic<bool>                g_waiting_reset{false};
+std::atomic<bool>                g_waiting_rf_change{false};
 
 // ── open_api — verbatim from blah2 RspDuo.cpp ────────────────────────────────
 void open_api()
@@ -181,17 +181,20 @@ void set_device_parameters(double fc_hz)
     cbFns.EventCbFn   = _event_callback;
 }
 
-// ── stream_a_callback_impl — gutted from blah2, reset-aware accumulator ───────
+// ── stream_a_callback_impl — gutted from blah2, rfChanged-aware accumulator ───
+// API spec (section 2.10.2): params->rfChanged fires when sdrplay_api_Update_Tuner_Frf
+// takes effect in the stream. This is the correct signal for retune completion.
+// NOTE: reset parameter (section 3.21) only fires on sdrplay_api_Init, NOT on Update.
 void stream_a_callback_impl(short *xi, short *xq,
-    unsigned int numSamples, unsigned int reset)
+    sdrplay_api_StreamCbParamsT *params, unsigned int numSamples)
 {
-    // Wait for PLL to lock after retune — discard samples until reset fires
-    if (g_waiting_reset)
+    // Wait for retune to take effect — discard samples until rfChanged fires
+    if (g_waiting_rf_change)
     {
-        if (!reset) return;                 // still settling — discard
+        if (!params->rfChanged) return;     // retune not yet in stream — discard
         g_capture_buf.clear();
-        g_waiting_reset = false;            // PLL locked, new frequency valid
-        std::cerr << "[sdr] reset received — capturing" << std::endl;
+        g_waiting_rf_change = false;        // new frequency now valid in stream
+        std::cerr << "[sdr] rfChanged received — capturing at new frequency" << std::endl;
         return;                             // skip this callback's samples — may be transitional
     }
 
@@ -257,8 +260,8 @@ void uninitialise_device()
 void retune(double fc_hz)
 {
     chParams->tunerParams.rfFreq.rfHz = fc_hz;
-    g_capture_done  = false;
-    g_waiting_reset = true;     // discard callbacks until reset flag fires
+    g_capture_done     = false;
+    g_waiting_rf_change = true;  // discard callbacks until params->rfChanged fires
     sdrplay_api_Update(chosenDevice->dev, g_tuner,
         sdrplay_api_Update_Tuner_Frf, sdrplay_api_Update_Ext1_None);
     // no sleep — sweep thread spins on g_capture_done with a timeout

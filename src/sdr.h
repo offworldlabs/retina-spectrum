@@ -1,5 +1,5 @@
 // Adapted from blah2-arm/src/capture/rspduo/RspDuo.h
-// Changes: stripped Source/IqData inheritance, added g_tuner/g_capture_buf/g_waiting_reset,
+// Changes: stripped Source/IqData inheritance, added g_tuner/g_capture_buf/g_waiting_rf_change,
 //          single-tuner mode only, stream_b stub
 
 #pragma once
@@ -25,7 +25,7 @@ extern sdrplay_api_TunerSelectT    g_tuner;
 // Capture state
 extern std::vector<std::complex<float>> g_capture_buf;
 extern std::atomic<bool>                g_capture_done;
-extern std::atomic<bool>                g_waiting_reset;
+extern std::atomic<bool>                g_waiting_rf_change;
 
 // SDR lifecycle (verbatim from RspDuo.cpp)
 void open_api();
@@ -56,7 +56,8 @@ static void _event_callback(sdrplay_api_EventT eventId,
     void *cbContext);
 
 // Forward declarations for callback implementations (defined in sdr.cpp)
-void stream_a_callback_impl(short *xi, short *xq, unsigned int numSamples, unsigned int reset);
+void stream_a_callback_impl(short *xi, short *xq,
+    sdrplay_api_StreamCbParamsT *params, unsigned int numSamples);
 void event_callback_impl(sdrplay_api_EventT eventId, sdrplay_api_TunerSelectT tuner,
     sdrplay_api_EventParamsT *params);
 
@@ -65,8 +66,8 @@ static void _stream_a_callback(short *xi, short *xq,
     sdrplay_api_StreamCbParamsT *params, unsigned int numSamples,
     unsigned int reset, void *cbContext)
 {
-    (void)params; (void)cbContext;
-    stream_a_callback_impl(xi, xq, numSamples, reset);
+    (void)reset; (void)cbContext;
+    stream_a_callback_impl(xi, xq, params, numSamples);
 }
 
 static void _event_callback(sdrplay_api_EventT eventId,
