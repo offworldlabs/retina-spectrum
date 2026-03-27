@@ -1,0 +1,6 @@
+services:
+  retina-spectrum:
+    build: .
+    ports:
+      - "3020:80"
+    restart: unless-stopped
