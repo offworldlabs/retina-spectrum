@@ -2,7 +2,8 @@
 
 // DSP
 #define N_FFT           8192    // samples per FFT (~977 Hz/bin at 8 MHz fs)
-#define N_DISPLAY       64      // display bins per step (125 kHz/bin)
+#define N_DISPLAY       64      // sweep mode display bins (125 kHz/bin, GROUP=128)
+#define N_DISPLAY_FOCUS 1024    // focus mode display bins (7.8 kHz/bin, GROUP=8)
 #define N_AVG           8       // FFT averages per step — reduces noise variance ~9 dB
 #define EMA_ALPHA       0.05f   // sweep-to-sweep EMA — ~20 sweeps to converge to flat noise floor
 

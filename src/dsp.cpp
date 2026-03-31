@@ -113,6 +113,60 @@ std::array<float, N_DISPLAY> process_step(
     return display;
 }
 
+// Focus mode — same pipeline as process_step but N_DISPLAY_FOCUS bins (7.8 kHz/bin)
+std::array<float, N_DISPLAY_FOCUS> process_step_focus(
+    float fc_mhz,
+    const std::vector<std::complex<float>>& samples)
+{
+    (void)fc_mhz;
+
+    if (!s_init) dsp_init();
+
+    constexpr int GROUP = N_FFT / N_DISPLAY_FOCUS;  // = 8 FFT bins per display bin
+    float linear[N_FFT];
+    std::array<float, N_DISPLAY_FOCUS> acc{};
+
+    for (int avg = 0; avg < N_AVG; avg++)
+    {
+        int offset = avg * N_FFT;
+
+        for (int n = 0; n < N_FFT; n++)
+        {
+            s_fft_buf[n][0] = (samples[offset + n].real() / 2048.0f) * s_window[n];
+            s_fft_buf[n][1] = (samples[offset + n].imag() / 2048.0f) * s_window[n];
+        }
+
+        fftwf_execute(s_plan);
+
+        for (int k = 0; k < N_FFT; k++)
+        {
+            int ks = (k + N_FFT / 2 + 1) % N_FFT;
+            float re = s_fft_buf[ks][0];
+            float im = s_fft_buf[ks][1];
+            linear[k] = re * re + im * im;
+        }
+
+        for (int d = 0; d < N_DISPLAY_FOCUS; d++)
+        {
+            float peak = 0.0f;
+            for (int g = 0; g < GROUP; g++)
+                if (linear[d * GROUP + g] > peak)
+                    peak = linear[d * GROUP + g];
+            acc[d] += peak;
+        }
+    }
+
+    const float norm = (float)N_FFT * (float)N_FFT;
+    std::array<float, N_DISPLAY_FOCUS> display;
+    for (int d = 0; d < N_DISPLAY_FOCUS; d++)
+    {
+        float p = (acc[d] / N_AVG) / norm;
+        display[d] = (p > 0.0f) ? 10.0f * log10f(p) : -120.0f;
+    }
+
+    return display;
+}
+
 // Frequency axis — centre MHz of each display bin for a given step
 std::array<float, N_DISPLAY> freq_axis(float fc_mhz)
 {
