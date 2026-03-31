@@ -177,6 +177,10 @@ void set_device_parameters(double fc_hz)
     chParams->rspDuoTunerParams.rfNotchEnable    = 0;
     chParams->rspDuoTunerParams.rfDabNotchEnable = 0;
 
+    // Zero-IF DC offset correction — eliminates LO leakage bell-curve at fc centre
+    chParams->ctrlParams.dcOffset.DCenable = 1;
+    chParams->ctrlParams.dcOffset.IQenable = 1;
+
     // Only StreamA used; StreamB stub required by SDK
     cbFns.StreamACbFn = _stream_a_callback;
     cbFns.StreamBCbFn = _stream_b_callback;
