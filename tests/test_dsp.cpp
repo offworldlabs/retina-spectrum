@@ -221,7 +221,7 @@ TEST_CASE("end-to-end: tone at known frequency reads back at correct freq and dB
     auto c = GENERATE(
         Case{ 99.0f,   98.8f,  800.0f, "FM 98.8 MHz"    },
         Case{ 99.0f,   98.0f, 1500.0f, "FM 98.0 MHz"    },
-        Case{203.0f,  202.9f,  500.0f, "DAB 202.9 MHz"  },
+        Case{199.0f,  198.31f, 500.0f, "VHF ch11 198.31 MHz"},
         Case{530.0f,  530.0f, 1000.0f, "DVB-T 530 MHz"  },
         Case{610.0f,  609.5f,  600.0f, "DVB-T 609.5 MHz"}
     );

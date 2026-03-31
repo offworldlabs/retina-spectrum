@@ -44,7 +44,7 @@
   <span id="status">initialising…</span>
   <div class="legend">
     <span><span class="dot" style="background:#4fc3f7"></span>FM 88–108 MHz</span>
-    <span><span class="dot" style="background:#81c784"></span>DAB 174–240 MHz</span>
+    <span><span class="dot" style="background:#81c784"></span>VHF 174–216 MHz</span>
     <span><span class="dot" style="background:#ffb74d"></span>UHF 470–694 MHz</span>
     <span style="color:#475569">— avg  ··· live</span>
   </div>
@@ -57,7 +57,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
 
-// ── Chart — 6 datasets: [FM-smooth, DAB-smooth, UHF-smooth, FM-raw, DAB-raw, UHF-raw]
+// ── Chart — 6 datasets: [FM-smooth, VHF-smooth, UHF-smooth, FM-raw, VHF-raw, UHF-raw]
 //   Smooth = solid bright line; Raw = dim dotted line
 
 Chart.defaults.color = '#64748b';
@@ -70,11 +70,11 @@ const chart = new Chart(document.getElementById('chart').getContext('2d'), {
     datasets: [
       // smooth (averaged) — solid, full brightness
       { label: 'FM avg',  data: [], borderColor: COLORS[0], showLine: true, pointRadius: 0, borderWidth: 2, borderDash: [] },
-      { label: 'DAB avg', data: [], borderColor: COLORS[1], showLine: true, pointRadius: 0, borderWidth: 2, borderDash: [] },
+      { label: 'VHF avg', data: [], borderColor: COLORS[1], showLine: true, pointRadius: 0, borderWidth: 2, borderDash: [] },
       { label: 'UHF avg', data: [], borderColor: COLORS[2], showLine: true, pointRadius: 0, borderWidth: 2, borderDash: [] },
       // raw (live sweep) — very dim, just to show current pass
       { label: 'FM live',  data: [], borderColor: COLORS[0] + '22', showLine: true, pointRadius: 0, borderWidth: 1, borderDash: [2, 4] },
-      { label: 'DAB live', data: [], borderColor: COLORS[1] + '22', showLine: true, pointRadius: 0, borderWidth: 1, borderDash: [2, 4] },
+      { label: 'VHF live', data: [], borderColor: COLORS[1] + '22', showLine: true, pointRadius: 0, borderWidth: 1, borderDash: [2, 4] },
       { label: 'UHF live', data: [], borderColor: COLORS[2] + '22', showLine: true, pointRadius: 0, borderWidth: 1, borderDash: [2, 4] },
     ]
   },
@@ -112,8 +112,8 @@ const chart = new Chart(document.getElementById('chart').getContext('2d'), {
 
 const statusEl = document.getElementById('status');
 
-// FM=0, DAB=1, UHF=2
-const bandIdx = fc => fc <= 108 ? 0 : fc <= 240 ? 1 : 2;
+// FM=0, VHF=1, UHF=2
+const bandIdx = fc => fc <= 108 ? 0 : fc <= 216 ? 1 : 2;
 
 // stepSlots[step] = { bi, offset } — records where each step lives in its dataset.
 // Populated on first sweep, reused for in-place overwrite on all subsequent sweeps.

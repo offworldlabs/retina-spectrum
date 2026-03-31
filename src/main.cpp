@@ -1,4 +1,4 @@
-// retina-spectrum — FM/DAB/UHF DVB-T sweep binary
+// retina-spectrum — FM/VHF/UHF ATSC sweep binary
 // Sweep bands, serve spectrum as JSON + SSE, display via Chart.js
 
 #include "config.h"
@@ -33,7 +33,7 @@ struct Band { const char *name; int start_mhz; int stop_mhz; int step_mhz; };
 // Step = 3 MHz: matches Zero-IF 8MS/s usable flat region (RSP manual p.21)
 static const Band BANDS[] = {
     {"fm",   88,  108,  3},   //  7 steps: 88..108  (covers 86.5–109.5 MHz ±1.5)
-    {"dab", 174,  240,  3},   // 23 steps: 174..240 (covers 172.5–241.5 MHz ±1.5)
+    {"vhf", 174,  216,  3},   //  8 steps: 174..216 (covers 172.5–217.5 MHz ±1.5, ch7–13)
     {"uhf", 468,  693,  3},   // 76 steps: 468..693 (covers 466.5–694.5 MHz ±1.5)
 };                            // 106 steps — centre 24/64 bins served (±1.5 MHz flat region)
 
@@ -187,8 +187,8 @@ static const MockStation MOCK_STATIONS[] = {
     {  95.8f, 150.0f },   // FM medium
     {  98.8f, 800.0f },   // FM strong (primary test peak)
     { 103.5f, 100.0f },   // FM weak
-    { 202.9f, 500.0f },   // DAB multiplex
-    { 218.6f, 400.0f },   // DAB multiplex
+    { 198.31f, 500.0f },  // VHF ch11 ATSC pilot (198.31 MHz)
+    { 210.31f, 400.0f },  // VHF ch13 ATSC pilot (210.31 MHz)
     { 530.0f, 600.0f },   // DVB-T UHF ch28
     { 610.0f, 450.0f },   // DVB-T UHF ch38
 };

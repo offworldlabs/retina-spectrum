@@ -177,8 +177,8 @@ void set_device_parameters(double fc_hz)
     chParams->ctrlParams.agc.enable        = sdrplay_api_AGC_50HZ;
     chParams->ctrlParams.agc.setPoint_dBfs = AGC_SETPOINT;
 
-    // CHANGED: notches OFF — blah2 enables these to block FM/DAB for radar,
-    //          we want to see FM and DAB bands
+    // CHANGED: notches OFF — blah2 enables these to block FM/VHF for radar,
+    //          we want to see FM and VHF bands
     chParams->rspDuoTunerParams.rfNotchEnable    = 0;
     chParams->rspDuoTunerParams.rfDabNotchEnable = 0;
 
