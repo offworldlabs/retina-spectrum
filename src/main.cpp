@@ -300,8 +300,10 @@ static void sweep_fn()
                 } else {
                     // Same frequency (focus mode looping) — rfChanged won't fire
                     // reliably on a no-op tune. Just restart capture directly.
+                    // Order matters: clear while callbacks suppressed, release last.
                     g_capture_buf.clear();
-                    g_capture_done = false;
+                    g_capture_done      = false;
+                    g_waiting_rf_change = false;  // release callback suppression
                 }
 
                 auto deadline = std::chrono::steady_clock::now()
