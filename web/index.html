@@ -119,6 +119,25 @@ const bandIdx = fc => fc <= 108 ? 0 : fc <= 240 ? 1 : 2;
 // Populated on first sweep, reused for in-place overwrite on all subsequent sweeps.
 const stepSlots = {};
 
+// ── Y-axis auto-scale ─────────────────────────────────────────────────────────
+// Tracks the global seen min/max across all received data.
+// Scale only ever expands — never contracts — so it stays stable.
+// Called with each step's power_db array; updates chart bounds if needed.
+let seenMax = -20;
+let seenMin = -90;
+
+function maybeRescale(values) {
+  const dMax = Math.max(...values);
+  const dMin = Math.min(...values);
+  let changed = false;
+  if (dMax > seenMax) { seenMax = dMax; changed = true; }
+  if (dMin < seenMin) { seenMin = dMin; changed = true; }
+  if (changed) {
+    chart.options.scales.y.max = Math.ceil( (seenMax + 5) / 10) * 10;
+    chart.options.scales.y.min = Math.floor((seenMin - 5) / 10) * 10;
+  }
+}
+
 function applyStep(msg) {
   const bi       = bandIdx(msg.fc_mhz);
   const binWidth = (msg.freq_stop - msg.freq_start) / msg.power_db.length;
@@ -141,6 +160,7 @@ function applyStep(msg) {
     }
   }
 
+  maybeRescale(msg.power_db);
   chart.update('none');
   statusEl.textContent = `scanning… ${msg.progress_pct}%`;
 }
