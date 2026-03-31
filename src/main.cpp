@@ -55,8 +55,8 @@ struct Slice {
     float fc_mhz         = 0;
     float freq_start_mhz = 0;
     float freq_stop_mhz  = 0;
-    std::array<float, N_DISPLAY> power_db{};   // raw (current sweep)
-    std::array<float, N_DISPLAY> smooth_db{};  // EMA-smoothed
+    std::vector<float> power_db;   // raw (current sweep)
+    std::vector<float> smooth_db;  // EMA-smoothed
     bool  valid          = false;
 };
 
@@ -123,7 +123,7 @@ static constexpr int   TRIM_N        = TRIM_HI - TRIM_LO;           // = 24
 static constexpr float TRIM_HALF_MHZ = (TRIM_N / 2) * (8.0f / N_DISPLAY);  // = 1.5
 
 static void append_bins(std::ostringstream& ss,
-                         const std::array<float, N_DISPLAY>& arr,
+                         const std::vector<float>& arr,
                          int lo, int hi)
 {
     ss << '[';
@@ -140,7 +140,7 @@ static std::string slice_to_sse(int step, const Slice& sl, int pct, bool full_bi
 {
     const float half = full_bins ? 4.0f : TRIM_HALF_MHZ;
     const int   lo   = full_bins ? 0    : TRIM_LO;
-    const int   hi   = full_bins ? N_DISPLAY : TRIM_HI;
+    const int   hi   = full_bins ? (int)sl.power_db.size() : TRIM_HI;
     std::ostringstream ss;
     ss << "data: {\"type\":\"step\""
        << ",\"step\":"         << step
@@ -231,7 +231,7 @@ static std::vector<std::complex<float>> mock_iq(float fc_mhz)
 
 static void sweep_fn()
 {
-    std::vector<std::array<float, N_DISPLAY>> ema;
+    std::vector<std::vector<float>> ema;
     bool  ema_valid = false;
     int   ema_total = 0;
     float ema_focus = -1.0f;  // track fc EMA was built for (focus mode reset)
@@ -252,7 +252,8 @@ static void sweep_fn()
 
         // Reset EMA when mode or focus frequency changes
         if (total != ema_total || focus != ema_focus) {
-            ema.assign(total, {});
+            int n_bins = is_focus ? N_DISPLAY_FOCUS : N_DISPLAY;
+            ema.assign(total, std::vector<float>(n_bins, 0.0f));
             ema_valid = false;
             ema_total = total;
             ema_focus = focus;
@@ -285,11 +286,17 @@ static void sweep_fn()
             std::cerr << "[sweep] step " << (i+1) << "/" << total
                       << "  fc=" << fc_mhz << " MHz  band=" << band << std::endl;
 
-            std::array<float, N_DISPLAY> power;
+            std::vector<float> power;
 
             if (g_mock)
             {
-                power = process_step(fc_mhz, mock_iq(fc_mhz));
+                if (is_focus) {
+                    auto arr = process_step_focus(fc_mhz, mock_iq(fc_mhz));
+                    power.assign(arr.begin(), arr.end());
+                } else {
+                    auto arr = process_step(fc_mhz, mock_iq(fc_mhz));
+                    power.assign(arr.begin(), arr.end());
+                }
             }
             else
             {
@@ -324,15 +331,22 @@ static void sweep_fn()
                 std::cerr << "[sweep] captured " << g_capture_buf.size()
                           << " samples at " << fc_mhz << " MHz" << std::endl;
 
-                power = process_step(fc_mhz, g_capture_buf);
+                if (is_focus) {
+                    auto arr = process_step_focus(fc_mhz, g_capture_buf);
+                    power.assign(arr.begin(), arr.end());
+                } else {
+                    auto arr = process_step(fc_mhz, g_capture_buf);
+                    power.assign(arr.begin(), arr.end());
+                }
             }
 
             // EMA blend — smooth_db tracks weighted history, power_db is raw
-            if (ema_valid)
-                for (int d = 0; d < N_DISPLAY; d++)
+            if (ema_valid) {
+                for (int d = 0; d < (int)power.size(); d++)
                     ema[i][d] = EMA_ALPHA * power[d] + (1.0f - EMA_ALPHA) * ema[i][d];
-            else
+            } else {
                 ema[i] = power;  // first sweep: seed with raw
+            }
 
             Slice sl;
             sl.fc_mhz         = fc_mhz;
@@ -384,16 +398,17 @@ static std::string build_sweep_json()
 {
     std::lock_guard<std::mutex> lk(g_state.mtx);
     bool is_focus = (g_focus_mhz.load() > 0.0f);
-    int  lo = is_focus ? 0      : TRIM_LO;
-    int  hi = is_focus ? N_DISPLAY : TRIM_HI;
+    int  lo = is_focus ? 0 : TRIM_LO;
     std::ostringstream freq_arr, power_arr, smooth_arr;
     bool first = true;
     for (auto& sl : g_state.buffer) {
         if (!sl.valid) continue;
-        auto freqs = freq_axis(sl.fc_mhz);
+        int   hi       = (int)sl.power_db.size();
+        float bin_width = 8.0f / hi;  // MHz per display bin
+        float f_start   = sl.fc_mhz - 4.0f;
         for (int d = lo; d < hi; d++) {
             if (!first) { freq_arr << ','; power_arr << ','; smooth_arr << ','; }
-            freq_arr   << freqs[d];
+            freq_arr   << (f_start + (d + 0.5f) * bin_width);
             power_arr  << sl.power_db[d];
             smooth_arr << sl.smooth_db[d];
             first = false;
