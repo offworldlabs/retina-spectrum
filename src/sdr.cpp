@@ -187,19 +187,30 @@ void set_device_parameters(double fc_hz)
     cbFns.EventCbFn   = _event_callback;
 }
 
-// ── stream_a_callback_impl — gutted from blah2, rfChanged-aware accumulator ───
-// API spec (section 2.10.2): params->rfChanged fires when sdrplay_api_Update_Tuner_Frf
-// takes effect in the stream. This is the correct signal for retune completion.
-// NOTE: reset parameter (section 3.21) only fires on sdrplay_api_Init, NOT on Update.
+// ── stream_a_callback_impl — gutted from blah2, reset+rfChanged-aware accumulator ─
+// API §3.17: sdrplay_api_Update_Tuner_Frf either:
+//   (a) applies inline → params->rfChanged=1 in next callback (small hop), or
+//   (b) stops + restarts the stream → reset=1 in first callback (large hop).
+// Both paths signal that the new frequency is now live; handle both.
 void stream_a_callback_impl(short *xi, short *xq,
-    sdrplay_api_StreamCbParamsT *params, unsigned int numSamples)
+    sdrplay_api_StreamCbParamsT *params, unsigned int numSamples, unsigned int reset)
 {
-    // Wait for retune to take effect — discard samples until rfChanged fires
+    // reset=1: stream stopped and restarted (large frequency jump, API §3.17).
+    if (reset)
+    {
+        g_capture_buf.clear();
+        g_capture_done      = false;
+        g_waiting_rf_change = false;
+        std::cerr << "[sdr] stream reset received — capturing at new frequency" << std::endl;
+        return;  // skip this callback's samples — may be transitional
+    }
+
+    // rfChanged=1: inline frequency update (small hop, no stream restart)
     if (g_waiting_rf_change)
     {
         if (!params->rfChanged) return;     // retune not yet in stream — discard
         g_capture_buf.clear();
-        g_waiting_rf_change = false;        // new frequency now valid in stream
+        g_waiting_rf_change = false;
         std::cerr << "[sdr] rfChanged received — capturing at new frequency" << std::endl;
         return;                             // skip this callback's samples — may be transitional
     }

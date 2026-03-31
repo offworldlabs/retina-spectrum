@@ -66,7 +66,7 @@ static void _event_callback(sdrplay_api_EventT eventId,
 
 // Forward declarations for callback implementations (defined in sdr.cpp)
 void stream_a_callback_impl(short *xi, short *xq,
-    sdrplay_api_StreamCbParamsT *params, unsigned int numSamples);
+    sdrplay_api_StreamCbParamsT *params, unsigned int numSamples, unsigned int reset);
 void event_callback_impl(sdrplay_api_EventT eventId, sdrplay_api_TunerSelectT tuner,
     sdrplay_api_EventParamsT *params);
 
@@ -75,8 +75,8 @@ static void _stream_a_callback(short *xi, short *xq,
     sdrplay_api_StreamCbParamsT *params, unsigned int numSamples,
     unsigned int reset, void *cbContext)
 {
-    (void)reset; (void)cbContext;
-    stream_a_callback_impl(xi, xq, params, numSamples);
+    (void)cbContext;
+    stream_a_callback_impl(xi, xq, params, numSamples, reset);
 }
 
 static void _event_callback(sdrplay_api_EventT eventId,
