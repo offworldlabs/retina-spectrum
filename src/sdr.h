@@ -5,11 +5,18 @@
 #pragma once
 
 #include "config.h"
-#include "sdrplay_api.h"
 
 #include <atomic>
 #include <complex>
 #include <vector>
+
+#ifdef MOCK_ONLY
+// Minimal stubs — SDRplay API not available in mock-only builds
+using sdrplay_api_TunerSelectT = int;
+static constexpr sdrplay_api_TunerSelectT sdrplay_api_Tuner_A = 0;
+static constexpr sdrplay_api_TunerSelectT sdrplay_api_Tuner_B = 1;
+#else
+#include "sdrplay_api.h"
 
 // SDR globals (verbatim from RspDuo.cpp)
 extern sdrplay_api_DeviceT        *chosenDevice;
@@ -18,6 +25,7 @@ extern sdrplay_api_DeviceParamsT  *deviceParams;
 extern sdrplay_api_ErrT            err;
 extern sdrplay_api_CallbackFnsT    cbFns;
 extern sdrplay_api_RxChannelParamsT *chParams;
+#endif
 
 // Tuner selection — sdrplay_api_Tuner_A (SMA1, reference) or _B (SMA2)
 extern sdrplay_api_TunerSelectT    g_tuner;
@@ -27,7 +35,7 @@ extern std::vector<std::complex<float>> g_capture_buf;
 extern std::atomic<bool>                g_capture_done;
 extern std::atomic<bool>                g_waiting_rf_change;
 
-// SDR lifecycle (verbatim from RspDuo.cpp)
+// SDR lifecycle
 void open_api();
 void get_device();
 void set_device_parameters(double fc_hz);
@@ -37,6 +45,7 @@ void uninitialise_device();
 // Retune mid-stream (new — blah2 never retunes)
 void retune(double fc_hz);
 
+#ifndef MOCK_ONLY
 // Static C callback wrappers — pattern verbatim from RspDuo.h
 // Callbacks are plain C function pointers; these forward to our free functions.
 static void _stream_a_callback(short *xi, short *xq,
@@ -77,3 +86,4 @@ static void _event_callback(sdrplay_api_EventT eventId,
     (void)cbContext;
     event_callback_impl(eventId, tuner, params);
 }
+#endif

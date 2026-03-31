@@ -8,6 +8,8 @@
 
 #include "sdr.h"
 
+#ifndef MOCK_ONLY
+
 #include <chrono>
 #include <iostream>
 #include <thread>
@@ -266,3 +268,23 @@ void retune(double fc_hz)
         sdrplay_api_Update_Tuner_Frf, sdrplay_api_Update_Ext1_None);
     // no sleep — sweep thread spins on g_capture_done with a timeout
 }
+
+#else  // MOCK_ONLY — no SDRplay API available
+
+#include <atomic>
+#include <complex>
+#include <vector>
+
+sdrplay_api_TunerSelectT         g_tuner           = sdrplay_api_Tuner_A;
+std::vector<std::complex<float>> g_capture_buf;
+std::atomic<bool>                g_capture_done{false};
+std::atomic<bool>                g_waiting_rf_change{false};
+
+void open_api()                    {}
+void get_device()                  {}
+void set_device_parameters(double) {}
+void initialise_device()           {}
+void uninitialise_device()         {}
+void retune(double)                {}
+
+#endif
