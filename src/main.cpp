@@ -107,8 +107,9 @@ struct SweepState {
 
 static SweepState        g_state;
 static std::thread       g_sweep_thread;
-static std::atomic<bool> g_mock{false};
-static std::string       g_web_dir = "/web";
+static std::atomic<bool>  g_mock{false};
+static std::atomic<float> g_focus_mhz{0.0f};  // 0 = sweep mode; >0 = focus on one fc
+static std::string        g_web_dir = "/web";
 
 // ── SSE helpers ───────────────────────────────────────────────────────────────
 
@@ -121,27 +122,34 @@ static constexpr int   TRIM_HI       = 44;    // exclusive
 static constexpr int   TRIM_N        = TRIM_HI - TRIM_LO;           // = 24
 static constexpr float TRIM_HALF_MHZ = (TRIM_N / 2) * (8.0f / N_DISPLAY);  // = 1.5
 
-static void append_centre(std::ostringstream& ss, const std::array<float, N_DISPLAY>& arr)
+static void append_bins(std::ostringstream& ss,
+                         const std::array<float, N_DISPLAY>& arr,
+                         int lo, int hi)
 {
     ss << '[';
-    for (int d = TRIM_LO; d < TRIM_HI; d++) {
-        if (d > TRIM_LO) ss << ',';
+    for (int d = lo; d < hi; d++) {
+        if (d > lo) ss << ',';
         ss << arr[d];
     }
     ss << ']';
 }
 
-static std::string slice_to_sse(int step, const Slice& sl, int pct)
+// full_bins=true → serve all 64 bins ±4 MHz (focus mode)
+// full_bins=false → serve centre 24 bins ±1.5 MHz (sweep mode)
+static std::string slice_to_sse(int step, const Slice& sl, int pct, bool full_bins = false)
 {
+    const float half = full_bins ? 4.0f : TRIM_HALF_MHZ;
+    const int   lo   = full_bins ? 0    : TRIM_LO;
+    const int   hi   = full_bins ? N_DISPLAY : TRIM_HI;
     std::ostringstream ss;
     ss << "data: {\"type\":\"step\""
        << ",\"step\":"         << step
        << ",\"fc_mhz\":"       << sl.fc_mhz
-       << ",\"freq_start\":"   << (sl.fc_mhz - TRIM_HALF_MHZ)   // centre ±TRIM_HALF_MHZ
-       << ",\"freq_stop\":"    << (sl.fc_mhz + TRIM_HALF_MHZ)
+       << ",\"freq_start\":"   << (sl.fc_mhz - half)
+       << ",\"freq_stop\":"    << (sl.fc_mhz + half)
        << ",\"progress_pct\":" << pct
-       << ",\"power_db\":";   append_centre(ss, sl.power_db);
-    ss << ",\"smooth_db\":";  append_centre(ss, sl.smooth_db);
+       << ",\"power_db\":";   append_bins(ss, sl.power_db,  lo, hi);
+    ss << ",\"smooth_db\":";  append_bins(ss, sl.smooth_db, lo, hi);
     ss << "}\n\n";
     return ss.str();
 }
@@ -223,25 +231,54 @@ static std::vector<std::complex<float>> mock_iq(float fc_mhz)
 
 static void sweep_fn()
 {
-    auto steps = build_steps();
-    int  total = (int)steps.size();
-
-    // EMA state — persists across sweeps, reset if step count changes
-    std::vector<std::array<float, N_DISPLAY>> ema(total);
-    bool ema_valid = false;
+    std::vector<std::array<float, N_DISPLAY>> ema;
+    bool  ema_valid = false;
+    int   ema_total = 0;
+    float ema_focus = -1.0f;  // track fc EMA was built for (focus mode reset)
 
     while (true)  // continuous sweep loop
     {
+        float focus    = g_focus_mhz.load();
+        bool  is_focus = (focus > 0.0f);
+
+        std::vector<Step> steps;
+        if (is_focus)
+            steps = {{focus, "focus"}};
+        else
+            steps = build_steps();
+
+        int total = (int)steps.size();
+
+        // Reset EMA when mode or focus frequency changes
+        if (total != ema_total || focus != ema_focus) {
+            ema.assign(total, {});
+            ema_valid = false;
+            ema_total = total;
+            ema_focus = focus;
+        }
+
         {
             std::lock_guard<std::mutex> lk(g_state.mtx);
             g_state.state        = "sweeping";
             g_state.progress_pct = 0;
             g_state.buffer.assign(total, Slice{});
         }
-        sse_broadcast("data: {\"type\":\"start\"}\n\n");
+
+        // start event carries mode so the frontend can clear + re-axis on switch
+        {
+            std::ostringstream start;
+            start << "data: {\"type\":\"start\",\"mode\":\""
+                  << (is_focus ? "focus" : "sweep") << "\"";
+            if (is_focus) start << ",\"fc\":" << focus;
+            start << "}\n\n";
+            sse_broadcast(start.str());
+        }
 
         for (int i = 0; i < total; i++)
         {
+            // Restart outer loop immediately if focus mode changed mid-sweep
+            if (g_focus_mhz.load() != focus) break;
+
             float       fc_mhz = steps[i].fc_mhz;
             const char *band   = steps[i].band;
             std::cerr << "[sweep] step " << (i+1) << "/" << total
@@ -287,8 +324,8 @@ static void sweep_fn()
 
             Slice sl;
             sl.fc_mhz         = fc_mhz;
-            sl.freq_start_mhz = fc_mhz - TRIM_HALF_MHZ;
-            sl.freq_stop_mhz  = fc_mhz + TRIM_HALF_MHZ;
+            sl.freq_start_mhz = fc_mhz - (is_focus ? 4.0f : TRIM_HALF_MHZ);
+            sl.freq_stop_mhz  = fc_mhz + (is_focus ? 4.0f : TRIM_HALF_MHZ);
             sl.power_db       = power;
             sl.smooth_db      = ema[i];
             sl.valid          = true;
@@ -300,7 +337,7 @@ static void sweep_fn()
                 g_state.progress_pct = pct;
             }
 
-            sse_broadcast(slice_to_sse(i, sl, pct));
+            sse_broadcast(slice_to_sse(i, sl, pct, is_focus));
         }
 
         ema_valid = true;  // from second sweep onwards, EMA has history
@@ -334,13 +371,15 @@ static bool start_sweep()
 static std::string build_sweep_json()
 {
     std::lock_guard<std::mutex> lk(g_state.mtx);
+    bool is_focus = (g_focus_mhz.load() > 0.0f);
+    int  lo = is_focus ? 0      : TRIM_LO;
+    int  hi = is_focus ? N_DISPLAY : TRIM_HI;
     std::ostringstream freq_arr, power_arr, smooth_arr;
     bool first = true;
     for (auto& sl : g_state.buffer) {
         if (!sl.valid) continue;
         auto freqs = freq_axis(sl.fc_mhz);
-        // Centre bins only — matches what SSE sends
-        for (int d = TRIM_LO; d < TRIM_HI; d++) {
+        for (int d = lo; d < hi; d++) {
             if (!first) { freq_arr << ','; power_arr << ','; smooth_arr << ','; }
             freq_arr   << freqs[d];
             power_arr  << sl.power_db[d];
@@ -443,6 +482,28 @@ int main(int argc, char *argv[])
             res.status = 409;
             res.set_content("{\"error\":\"already sweeping\"}", "application/json");
         }
+    });
+
+    svr.Get("/api/focus", [](const httplib::Request& req, httplib::Response& res) {
+        if (req.has_param("fc")) {
+            float fc = 0.0f;
+            try { fc = std::stof(req.get_param_value("fc")); }
+            catch (...) {
+                res.status = 400;
+                res.set_content("{\"error\":\"invalid fc\"}", "application/json");
+                return;
+            }
+            if (fc != 0.0f && (fc < 50.0f || fc > 2000.0f)) {
+                res.status = 400;
+                res.set_content("{\"error\":\"fc out of range (50–2000 MHz)\"}", "application/json");
+                return;
+            }
+            g_focus_mhz = fc;
+            std::cerr << "[focus] " << (fc > 0 ? std::to_string(fc) + " MHz" : "cleared") << std::endl;
+        }
+        std::ostringstream ss;
+        ss << "{\"focus_mhz\":" << g_focus_mhz.load() << "}";
+        res.set_content(ss.str(), "application/json");
     });
 
     // SSE — each client gets its own queue; sweep thread pushes, this thread blocks
