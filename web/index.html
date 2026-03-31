@@ -29,6 +29,19 @@
   header h1  { font-size: 0.95rem; letter-spacing: 0.15em; color: #94a3b8; }
   #status    { font-size: 0.8rem; color: #64748b; }
 
+  #back-btn {
+    display: none;
+    font-family: 'Courier New', monospace;
+    font-size: 0.8rem;
+    color: #64748b;
+    background: none;
+    border: 1px solid #1f2937;
+    border-radius: 4px;
+    padding: 3px 10px;
+    cursor: pointer;
+  }
+  #back-btn:hover { color: #94a3b8; border-color: #334155; }
+
   .legend { display: flex; gap: 16px; margin-left: auto; font-size: 0.78rem; color: #94a3b8; }
   .legend span { display: flex; align-items: center; gap: 5px; }
   .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
@@ -41,6 +54,7 @@
 
 <header>
   <h1>retina-spectrum</h1>
+  <button id="back-btn" onclick="exitFocus()">&#8592; sweep</button>
   <span id="status">initialising…</span>
   <div class="legend">
     <span><span class="dot" style="background:#4fc3f7"></span>FM 88–108 MHz</span>
@@ -83,6 +97,11 @@ const chart = new Chart(document.getElementById('chart').getContext('2d'), {
     responsive: true,
     maintainAspectRatio: false,
     parsing: false,
+    onClick(event, _elements, chart) {
+      if (currentMode === 'focus') return;
+      const fc = chart.scales.x.getValueForPixel(event.x);
+      if (fc != null) enterFocus(fc);
+    },
     plugins: {
       legend: { display: false },
       tooltip: {
@@ -214,6 +233,8 @@ function openEvents() {
         else                      setAxisSweep();
         currentMode = msg.mode;
         currentFc   = newFc;
+        document.getElementById('back-btn').style.display =
+          msg.mode === 'focus' ? 'inline-block' : 'none';
       }
       statusEl.textContent = msg.mode === 'focus'
         ? `FOCUS ${msg.fc} MHz — scanning…`
@@ -235,6 +256,23 @@ function openEvents() {
     setTimeout(openEvents, 3000);
   };
 }
+
+// ── SPA navigation ────────────────────────────────────────────────────────────
+
+async function enterFocus(fc) {
+  await fetch(`/api/focus?fc=${fc.toFixed(2)}`);
+  history.pushState(null, '', `?fc=${fc.toFixed(2)}`);
+}
+
+async function exitFocus() {
+  await fetch('/api/focus?fc=0');
+  history.pushState(null, '', location.pathname);
+}
+
+window.addEventListener('popstate', async () => {
+  const fc = new URLSearchParams(location.search).get('fc');
+  await fetch(`/api/focus?fc=${fc ? parseFloat(fc) : 0}`);
+});
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
