@@ -235,6 +235,7 @@ static void sweep_fn()
     bool  ema_valid = false;
     int   ema_total = 0;
     float ema_focus = -1.0f;  // track fc EMA was built for (focus mode reset)
+    float last_tuned_mhz = 0.0f;  // track last hardware tune — avoid same-freq rfChanged issue
 
     while (true)  // continuous sweep loop
     {
@@ -292,7 +293,16 @@ static void sweep_fn()
             }
             else
             {
-                retune((double)fc_mhz * 1e6);
+                if (fc_mhz != last_tuned_mhz) {
+                    // New frequency — use rfChanged mechanism to flush LO settling
+                    retune((double)fc_mhz * 1e6);
+                    last_tuned_mhz = fc_mhz;
+                } else {
+                    // Same frequency (focus mode looping) — rfChanged won't fire
+                    // reliably on a no-op tune. Just restart capture directly.
+                    g_capture_buf.clear();
+                    g_capture_done = false;
+                }
 
                 auto deadline = std::chrono::steady_clock::now()
                               + std::chrono::milliseconds(RESET_TIMEOUT_MS);
