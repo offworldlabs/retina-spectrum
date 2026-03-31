@@ -152,6 +152,11 @@ void set_device_parameters(double fc_hz)
     // verbatim from blah2 (isochronous USB mode)
     deviceParams->devParams->mode = sdrplay_api_ISOCH;
 
+    // Must be set explicitly — API default is 2 MHz, not 8 MHz.
+    // Without this, frequency bins are 4× stretched vs assumed, causing peaks
+    // to shift by -1.5 MHz per +0.5 MHz fc change in focus mode.
+    deviceParams->devParams->fsFreq.fsHz = (double)SAMPLE_RATE_HZ;
+
     chParams = deviceParams->rxChannelA;
     if (chParams == nullptr)
     {
