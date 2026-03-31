@@ -123,10 +123,16 @@ const stepSlots = {};
 const focusParam = new URLSearchParams(window.location.search).get('fc');
 const focusFc    = focusParam ? parseFloat(focusParam) : null;
 let   currentMode = null;  // 'sweep' | 'focus' — track to detect mode switches
+let   currentFc   = null;  // track focus fc — detect fc changes within focus mode
 
 function clearChart() {
   for (const ds of chart.data.datasets) ds.data = [];
   for (const k of Object.keys(stepSlots)) delete stepSlots[k];
+  // Reset y-axis tracking so new data can rescale cleanly
+  seenMax = -20;
+  seenMin = -90;
+  chart.options.scales.y.max = -20;
+  chart.options.scales.y.min = -90;
 }
 
 function setAxisSweep() {
@@ -198,12 +204,16 @@ function openEvents() {
     try { msg = JSON.parse(e.data); } catch { return; }
 
     if (msg.type === 'start') {
-      // Clear chart and re-axis whenever mode changes
-      if (msg.mode !== currentMode) {
+      // Clear chart and re-axis when mode changes OR when focus fc changes.
+      // Without this, step-0 slot X coords stay from the old fc and new Y data
+      // gets painted at wrong frequencies (peaks jump by the fc delta).
+      const newFc = msg.mode === 'focus' ? msg.fc : null;
+      if (msg.mode !== currentMode || newFc !== currentFc) {
         clearChart();
         if (msg.mode === 'focus') setAxisFocus(msg.fc);
         else                      setAxisSweep();
         currentMode = msg.mode;
+        currentFc   = newFc;
       }
       statusEl.textContent = msg.mode === 'focus'
         ? `FOCUS ${msg.fc} MHz — scanning…`
