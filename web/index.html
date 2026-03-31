@@ -165,7 +165,6 @@ function maybeRescale(values) {
 }
 
 function applyStep(msg) {
-  console.log('[step]', 'fc=', msg.fc_mhz, 'freq_start=', msg.freq_start, 'freq_stop=', msg.freq_stop, 'bins=', msg.power_db.length, 'binWidth=', (msg.freq_stop - msg.freq_start) / msg.power_db.length);
   const bi       = bandIdx(msg.fc_mhz);
   const binWidth = (msg.freq_stop - msg.freq_start) / msg.power_db.length;
 
