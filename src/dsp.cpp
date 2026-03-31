@@ -37,9 +37,13 @@ static void dsp_init()
         exit(1);
     }
 
-    // Hanning window — computed once
+    // Blackman window — computed once
+    // −74 dB sidelobe suppression (vs −32 dB Hanning): prevents strong FM stations
+    // from masking weaker neighbours through spectral leakage
     for (int n = 0; n < N_FFT; n++)
-        s_window[n] = 0.5f * (1.0f - std::cos(2.0f * M_PI * n / (N_FFT - 1)));
+        s_window[n] = 0.42f
+                    - 0.5f  * std::cos(2.0f * M_PI * n / (N_FFT - 1))
+                    + 0.08f * std::cos(4.0f * M_PI * n / (N_FFT - 1));
 
     s_init = true;
 }
@@ -60,11 +64,14 @@ std::array<float, N_DISPLAY> process_step(
     {
         int offset = avg * N_FFT;
 
-        // ── 1. Load samples + apply Hanning window ────────────────────────
+        // ── 1. Load samples + apply Blackman window ───────────────────────
+        // Normalise by 2048: RSPduo at Zero-IF 8MS/s = 12-bit ADC (RSP manual p.21).
+        // API delivers right-justified samples in 16-bit shorts → full-scale peak = 2^11 = 2048.
+        // /32768 would read 24 dB too low.
         for (int n = 0; n < N_FFT; n++)
         {
-            s_fft_buf[n][0] = (samples[offset + n].real() / 32768.0f) * s_window[n];
-            s_fft_buf[n][1] = (samples[offset + n].imag() / 32768.0f) * s_window[n];
+            s_fft_buf[n][0] = (samples[offset + n].real() / 2048.0f) * s_window[n];
+            s_fft_buf[n][1] = (samples[offset + n].imag() / 2048.0f) * s_window[n];
         }
 
         // ── 2. FFT ────────────────────────────────────────────────────────
@@ -79,13 +86,17 @@ std::array<float, N_DISPLAY> process_step(
             linear[k] = re * re + im * im;
         }
 
-        // ── 4. Decimate: sum linear-power bins → display bins ────────────
+        // ── 4. Decimate: peak-detect within each display bin group ───────
+        // Take the strongest FFT bin in each group of GROUP=128 bins.
+        // Averaging would suppress a narrowband FM carrier by ~21 dB (10*log10(128)).
+        // Peak detection ensures signals always report at correct level (RSP manual).
         for (int d = 0; d < N_DISPLAY; d++)
         {
-            float sum = 0.0f;
+            float peak = 0.0f;
             for (int g = 0; g < GROUP; g++)
-                sum += linear[d * GROUP + g];
-            acc[d] += sum / GROUP;
+                if (linear[d * GROUP + g] > peak)
+                    peak = linear[d * GROUP + g];
+            acc[d] += peak;
         }
     }
 

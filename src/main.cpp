@@ -30,11 +30,12 @@ using namespace std::chrono_literals;
 struct Band { const char *name; int start_mhz; int stop_mhz; int step_mhz; };
 
 // Integer MHz to avoid float comparison issues in loop bounds
+// Step = 3 MHz: matches Zero-IF 8MS/s usable flat region (RSP manual p.21)
 static const Band BANDS[] = {
-    {"fm",   88,  104,  4},   //  5 steps: 88..104  (covers 86–106 MHz centre ±2)
-    {"dab", 174,  238,  4},   // 17 steps: 174..238 (covers 172–240 MHz centre ±2)
-    {"uhf", 470,  690,  4},   // 56 steps: 470..690 (covers 468–692 MHz centre ±2)
-};                            // 78 steps — only centre 32/64 bins served; no step-edge dips
+    {"fm",   88,  108,  3},   //  7 steps: 88..108  (covers 86.5–109.5 MHz ±1.5)
+    {"dab", 174,  240,  3},   // 23 steps: 174..240 (covers 172.5–241.5 MHz ±1.5)
+    {"uhf", 468,  693,  3},   // 76 steps: 468..693 (covers 466.5–694.5 MHz ±1.5)
+};                            // 106 steps — centre 24/64 bins served (±1.5 MHz flat region)
 
 struct Step { float fc_mhz; const char *band; };
 
@@ -111,12 +112,14 @@ static std::string       g_web_dir = "/web";
 
 // ── SSE helpers ───────────────────────────────────────────────────────────────
 
-// Only output the centre 32 bins (d=16..47) of the 64-bin FFT.
-// These bins fall within ±2 MHz of the step centre where the Hanning window
-// is flat enough (≥ -3 dB). With 4 MHz steps the ranges tile without overlap.
-static constexpr int TRIM_LO  = 16;
-static constexpr int TRIM_HI  = 48;   // exclusive
-static constexpr int TRIM_N   = TRIM_HI - TRIM_LO;  // = 32
+// Only output the centre 24 bins (d=20..43) of the 64-bin FFT.
+// These bins fall within ±1.5 MHz of the step centre — the genuinely flat region
+// of the Zero-IF 8MS/s filter (RSP manual p.21 freq step = 3 MHz).
+// With 3 MHz steps the ranges tile gaplessly without overlap.
+static constexpr int   TRIM_LO       = 20;
+static constexpr int   TRIM_HI       = 44;    // exclusive
+static constexpr int   TRIM_N        = TRIM_HI - TRIM_LO;           // = 24
+static constexpr float TRIM_HALF_MHZ = (TRIM_N / 2) * (8.0f / N_DISPLAY);  // = 1.5
 
 static void append_centre(std::ostringstream& ss, const std::array<float, N_DISPLAY>& arr)
 {
@@ -134,8 +137,8 @@ static std::string slice_to_sse(int step, const Slice& sl, int pct)
     ss << "data: {\"type\":\"step\""
        << ",\"step\":"         << step
        << ",\"fc_mhz\":"       << sl.fc_mhz
-       << ",\"freq_start\":"   << (sl.fc_mhz - 2.0f)   // centre ±2 MHz only
-       << ",\"freq_stop\":"    << (sl.fc_mhz + 2.0f)
+       << ",\"freq_start\":"   << (sl.fc_mhz - TRIM_HALF_MHZ)   // centre ±TRIM_HALF_MHZ
+       << ",\"freq_stop\":"    << (sl.fc_mhz + TRIM_HALF_MHZ)
        << ",\"progress_pct\":" << pct
        << ",\"power_db\":";   append_centre(ss, sl.power_db);
     ss << ",\"smooth_db\":";  append_centre(ss, sl.smooth_db);
@@ -164,30 +167,56 @@ static void sse_close_all()
     g_state.sse_clients.clear();
 }
 
-// ── Mock spectrum generator ───────────────────────────────────────────────────
+// ── Mock IQ generator ─────────────────────────────────────────────────────────
+// Generates N_FFT*N_AVG complex samples at ADC scale (±2048 full-scale).
+// Feeds through process_step() so all DSP (Blackman window, /2048, peak-max)
+// is exercised identically to hardware.
 
-static std::array<float, N_DISPLAY> mock_step(float fc_mhz)
+struct MockStation { float freq_mhz; float amplitude; };
+
+static const MockStation MOCK_STATIONS[] = {
+    {  89.1f, 300.0f },   // FM weak
+    {  95.8f, 150.0f },   // FM medium
+    {  98.8f, 800.0f },   // FM strong (primary test peak)
+    { 103.5f, 100.0f },   // FM weak
+    { 202.9f, 500.0f },   // DAB multiplex
+    { 218.6f, 400.0f },   // DAB multiplex
+    { 530.0f, 600.0f },   // DVB-T UHF ch28
+    { 610.0f, 450.0f },   // DVB-T UHF ch38
+};
+
+static std::vector<std::complex<float>> mock_iq(float fc_mhz)
 {
-    auto freqs = freq_axis(fc_mhz);
-    std::array<float, N_DISPLAY> out;
+    constexpr int   N  = N_FFT * N_AVG;
+    constexpr float fs = (float)SAMPLE_RATE_HZ;
+    std::vector<std::complex<float>> buf(N);
 
-    for (int d = 0; d < N_DISPLAY; d++)
-        out[d] = -65.0f + (float)(rand() % 40 - 20) * 0.1f;  // noise floor ±2 dB
+    // Gaussian noise via Box-Muller — noise_std 30 ADC counts → ~-87 dBFS floor
+    constexpr float noise_std = 30.0f;
+    for (int n = 0; n < N; n++) {
+        float u1 = (rand() + 1.0f) / ((float)RAND_MAX + 2.0f);  // avoid log(0)
+        float u2 = (float)rand() / (float)RAND_MAX;
+        float r  = sqrtf(-2.0f * logf(u1)) * noise_std;
+        buf[n] = { r * cosf(2.0f * (float)M_PI * u2),
+                   r * sinf(2.0f * (float)M_PI * u2) };
+    }
 
-    // Gaussian peak: add_peak(centre_mhz, amplitude_db, sigma_mhz)
-    auto add_peak = [&](float centre, float amp, float sigma) {
-        for (int d = 0; d < N_DISPLAY; d++) {
-            float diff = freqs[d] - centre;
-            out[d] += amp * std::exp(-0.5f * diff * diff / (sigma * sigma));
+    // Complex tone for each station within ±4 MHz of fc
+    for (const auto& s : MOCK_STATIONS) {
+        float offset_hz = (s.freq_mhz - fc_mhz) * 1.0e6f;
+        if (fabsf(offset_hz) > 4.0e6f) continue;
+        float phase     = 0.0f;
+        float phase_inc = 2.0f * (float)M_PI * offset_hz / fs;
+        for (int n = 0; n < N; n++) {
+            buf[n] = { buf[n].real() + s.amplitude * cosf(phase),
+                       buf[n].imag() + s.amplitude * sinf(phase) };
+            phase += phase_inc;
+            if (phase >  (float)M_PI) phase -= 2.0f * (float)M_PI;
+            if (phase < -(float)M_PI) phase += 2.0f * (float)M_PI;
         }
-    };
+    }
 
-    add_peak( 98.8f,  25.0f, 0.15f);  // FM station
-    add_peak(202.9f,  18.0f, 2.0f);   // DAB multiplex (wideband)
-    add_peak(530.0f,  28.0f, 3.5f);   // DVB-T UHF ch28 (fills most of 8 MHz)
-    add_peak(610.0f,  22.0f, 3.5f);   // DVB-T UHF ch38
-
-    return out;
+    return buf;
 }
 
 // ── Sweep thread ──────────────────────────────────────────────────────────────
@@ -222,8 +251,7 @@ static void sweep_fn()
 
             if (g_mock)
             {
-                std::this_thread::sleep_for(std::chrono::milliseconds(30));
-                power = mock_step(fc_mhz);
+                power = process_step(fc_mhz, mock_iq(fc_mhz));
             }
             else
             {
@@ -259,8 +287,8 @@ static void sweep_fn()
 
             Slice sl;
             sl.fc_mhz         = fc_mhz;
-            sl.freq_start_mhz = fc_mhz - 4.0f;
-            sl.freq_stop_mhz  = fc_mhz + 4.0f;
+            sl.freq_start_mhz = fc_mhz - TRIM_HALF_MHZ;
+            sl.freq_stop_mhz  = fc_mhz + TRIM_HALF_MHZ;
             sl.power_db       = power;
             sl.smooth_db      = ema[i];
             sl.valid          = true;
