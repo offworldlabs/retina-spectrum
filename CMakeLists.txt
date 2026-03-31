@@ -34,6 +34,23 @@ target_link_libraries(retina-spectrum PRIVATE
 if(MOCK_ONLY)
     target_compile_definitions(retina-spectrum PRIVATE MOCK_ONLY)
     message(STATUS "MOCK_ONLY build — SDRplay API not required")
+
+    # ── Test suite (Catch2) ───────────────────────────────────────────────────
+    FetchContent_Declare(Catch2
+        GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+        GIT_TAG        v3.7.1)
+    FetchContent_MakeAvailable(Catch2)
+
+    enable_testing()
+
+    add_executable(test_dsp tests/test_dsp.cpp src/dsp.cpp)
+    target_include_directories(test_dsp PRIVATE src/)
+    target_link_libraries(test_dsp PRIVATE PkgConfig::FFTW3F Catch2::Catch2WithMain)
+
+    include(CTest)
+    include(Catch)
+    catch_discover_tests(test_dsp)
+
 else()
     target_include_directories(retina-spectrum PRIVATE
         /usr/local/include)     # sdrplay_api.h (installed by SDRplay API package)
