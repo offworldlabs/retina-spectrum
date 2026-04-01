@@ -231,10 +231,17 @@ static std::vector<std::complex<float>> mock_iq(float fc_mhz)
 
 static void sweep_fn()
 {
-    std::vector<std::vector<float>> ema;
-    bool  ema_valid = false;
-    int   ema_total = 0;
-    float ema_focus = -1.0f;  // track fc EMA was built for (focus mode reset)
+    // Sweep EMA — persists across focus excursions so the averaged line doesn't
+    // have to rebuild from scratch every time the user returns from focus mode.
+    std::vector<std::vector<float>> sweep_ema;
+    bool  sweep_ema_valid = false;
+    int   sweep_ema_total = 0;
+
+    // Focus EMA — separate buffer, reset when the focus fc changes.
+    std::vector<std::vector<float>> focus_ema;
+    bool  focus_ema_valid = false;
+    float focus_ema_fc    = -1.0f;
+
     float last_tuned_mhz = 0.0f;  // track last hardware tune — avoid same-freq rfChanged issue
 
     while (true)  // continuous sweep loop
@@ -250,13 +257,17 @@ static void sweep_fn()
 
         int total = (int)steps.size();
 
-        // Reset EMA when mode or focus frequency changes
-        if (total != ema_total || focus != ema_focus) {
-            int n_bins = is_focus ? N_DISPLAY_FOCUS : N_DISPLAY;
-            ema.assign(total, std::vector<float>(n_bins, 0.0f));
-            ema_valid = false;
-            ema_total = total;
-            ema_focus = focus;
+        // Reset focus EMA when the focus frequency changes
+        if (is_focus && focus != focus_ema_fc) {
+            focus_ema.assign(1, std::vector<float>(N_DISPLAY_FOCUS, 0.0f));
+            focus_ema_valid = false;
+            focus_ema_fc    = focus;
+        }
+        // Reset sweep EMA if step count changed (e.g. band config change)
+        if (!is_focus && (int)sweep_ema.size() != total) {
+            sweep_ema.assign(total, std::vector<float>(N_DISPLAY, 0.0f));
+            sweep_ema_valid = false;
+            sweep_ema_total = total;
         }
 
         {
@@ -341,11 +352,13 @@ static void sweep_fn()
             }
 
             // EMA blend — smooth_db tracks weighted history, power_db is raw
-            if (ema_valid) {
+            auto& cur_ema       = is_focus ? focus_ema[0]  : sweep_ema[i];
+            bool& cur_ema_valid = is_focus ? focus_ema_valid : sweep_ema_valid;
+            if (cur_ema_valid) {
                 for (int d = 0; d < (int)power.size(); d++)
-                    ema[i][d] = EMA_ALPHA * power[d] + (1.0f - EMA_ALPHA) * ema[i][d];
+                    cur_ema[d] = EMA_ALPHA * power[d] + (1.0f - EMA_ALPHA) * cur_ema[d];
             } else {
-                ema[i] = power;  // first sweep: seed with raw
+                cur_ema = power;  // first pass: seed with raw
             }
 
             Slice sl;
@@ -353,7 +366,7 @@ static void sweep_fn()
             sl.freq_start_mhz = fc_mhz - (is_focus ? 4.0f : TRIM_HALF_MHZ);
             sl.freq_stop_mhz  = fc_mhz + (is_focus ? 4.0f : TRIM_HALF_MHZ);
             sl.power_db       = power;
-            sl.smooth_db      = ema[i];
+            sl.smooth_db      = cur_ema;
             sl.valid          = true;
 
             int pct = (i + 1) * 100 / total;
@@ -364,9 +377,20 @@ static void sweep_fn()
             }
 
             sse_broadcast(slice_to_sse(i, sl, pct, is_focus));
+
+            // Pause between focus scans — makes the display readable.
+            // Check every 10 ms so a mode change exits promptly.
+            if (is_focus) {
+                for (int ms = 0; ms < FOCUS_PAUSE_MS; ms += 10) {
+                    if (g_focus_mhz.load() != focus) break;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+            }
         }
 
-        ema_valid = true;  // from second sweep onwards, EMA has history
+        // Mark EMA as having history after the first complete pass
+        sweep_ema_valid = true;
+        focus_ema_valid = true;
 
         {
             std::lock_guard<std::mutex> lk(g_state.mtx);

@@ -231,6 +231,10 @@ let evtSource = null;
 
 function openEvents() {
   if (evtSource) { evtSource.close(); evtSource = null; }
+  // Reset mode/fc state so the first 'start' event always triggers clearChart+re-axis,
+  // even if the mode hasn't changed (e.g. after an SSE reconnect mid-sweep).
+  currentMode = null;
+  currentFc   = null;
   evtSource = new EventSource('/api/events');
 
   evtSource.onmessage = e => {
@@ -276,12 +280,21 @@ function openEvents() {
 
 async function enterFocus(fc) {
   await fetch(`/api/focus?fc=${fc.toFixed(2)}`);
-  history.pushState(null, '', `?fc=${fc.toFixed(2)}`);
+  // pushState first time (sweep→focus), replaceState when already in focus
+  if (currentMode === 'focus') history.replaceState(null, '', `?fc=${fc.toFixed(2)}`);
+  else                         history.pushState(null, '', `?fc=${fc.toFixed(2)}`);
 }
 
 async function exitFocus() {
   await fetch('/api/focus?fc=0');
   history.pushState(null, '', location.pathname);
+  // Update UI immediately — don't wait for the SSE start:sweep event
+  clearChart();
+  setAxisSweep();
+  currentMode = 'sweep';
+  currentFc   = null;
+  document.getElementById('back-btn').style.display = 'none';
+  statusEl.textContent = 'scanning…';
 }
 
 window.addEventListener('popstate', async () => {
