@@ -60,8 +60,7 @@
     <span><span class="dot" style="background:#4fc3f7"></span>FM 88–108</span>
     <span><span class="dot" style="background:#81c784"></span>VHF ch1–13</span>
     <span><span class="dot" style="background:#ffb74d"></span>UHF ch14–51</span>
-    <span><span class="dot" style="background:#4ade80;border:2px solid #4ade80;background:transparent"></span>pilot</span>
-    <span style="color:#475569">— avg  ··· live</span>
+    <span style="color:#475569">— EMA avg</span>
   </div>
 </header>
 
@@ -190,16 +189,17 @@ const channelOverlayPlugin = {
       }
     }
 
-    // Peak power text at bottom of each channel that has data
+    // Pilot power text — only for confirmed pilot matches
     for (const [key, pd] of Object.entries(peakDisplay)) {
+      if (!pd.hasPilot) continue;
       const fc  = parseFloat(key);
       const xPx = xScale.getPixelForValue(fc);
       if (xPx < xScale.left || xPx > xScale.right) continue;
       ctx.save();
       ctx.font      = '9px Courier New';
-      ctx.fillStyle = pd.hasPilot ? '#4ade80' : '#64748b';
+      ctx.fillStyle = '#4ade80';
       ctx.textAlign = 'center';
-      ctx.fillText(`${pd.topPower.toFixed(0)} dB`, xPx, yScale.bottom - 4);
+      ctx.fillText(`${pd.pilotPower.toFixed(0)} dB`, xPx, yScale.bottom - 4);
       ctx.restore();
     }
   }
@@ -216,31 +216,18 @@ const chart = new Chart(document.getElementById('chart').getContext('2d'), {
   plugins: [channelOverlayPlugin],
   data: {
     datasets: [
-      // Smooth (averaged) — solid, full brightness [0–2]
+      // EMA-smoothed average [0–2]
       { label: 'FM avg',  data: [], borderColor: COLORS[0], showLine: true, pointRadius: 0, borderWidth: 2 },
       { label: 'VHF avg', data: [], borderColor: COLORS[1], showLine: true, pointRadius: 0, borderWidth: 2 },
       { label: 'UHF avg', data: [], borderColor: COLORS[2], showLine: true, pointRadius: 0, borderWidth: 2 },
-      // Raw (live sweep) — dim dotted [3–5]
-      { label: 'FM live',  data: [], borderColor: COLORS[0] + '22', showLine: true, pointRadius: 0, borderWidth: 1, borderDash: [2, 4] },
-      { label: 'VHF live', data: [], borderColor: COLORS[1] + '22', showLine: true, pointRadius: 0, borderWidth: 1, borderDash: [2, 4] },
-      { label: 'UHF live', data: [], borderColor: COLORS[2] + '22', showLine: true, pointRadius: 0, borderWidth: 1, borderDash: [2, 4] },
-      // Peak circles — pilot matches [6]
+      // Pilot match dots [3]
       {
         label: 'pilot', data: [],
         type: 'scatter', showLine: false,
-        pointRadius: 8, pointStyle: 'circle',
-        pointBorderWidth: 2, pointBorderColor: '#4ade80',
-        pointBackgroundColor: 'transparent',
+        pointRadius: 3, pointStyle: 'circle',
+        pointBorderWidth: 0,
+        pointBackgroundColor: '#4ade80',
         borderColor: '#4ade80',
-      },
-      // Peak circles — other peaks [7]
-      {
-        label: 'peaks', data: [],
-        type: 'scatter', showLine: false,
-        pointRadius: 5, pointStyle: 'circle',
-        pointBorderWidth: 1, pointBorderColor: '#475569',
-        pointBackgroundColor: 'transparent',
-        borderColor: '#475569',
       },
     ]
   },
@@ -338,18 +325,15 @@ function insertSorted(arr, pt) {
   arr.splice(lo, 0, pt);
 }
 
-// Rebuild peak circle datasets from peakMap
+// Rebuild pilot dot dataset from peakMap
 function rebuildPeakDatasets() {
-  const pilotPts = [], otherPts = [];
+  const pilotPts = [];
   for (const peaks of Object.values(peakMap)) {
     for (const pk of peaks) {
-      const pt = { x: pk.freq_mhz, y: pk.power_db };
-      if (pk.is_pilot) pilotPts.push(pt);
-      else             otherPts.push(pt);
+      if (pk.is_pilot) pilotPts.push({ x: pk.freq_mhz, y: pk.power_db });
     }
   }
-  chart.data.datasets[6].data = pilotPts;
-  chart.data.datasets[7].data = otherPts;
+  chart.data.datasets[3].data = pilotPts;
 }
 
 // ── Focus mode ────────────────────────────────────────────────────────────────
@@ -409,22 +393,18 @@ function applyStep(msg) {
   const binWidth = (msg.freq_stop - msg.freq_start) / msg.power_db.length;
 
   if (stepSlots[msg.step] === undefined) {
-    const avgPts = [], livePts = [];
+    const avgPts = [];
     for (let d = 0; d < msg.power_db.length; d++) {
-      const x    = msg.freq_start + (d + 0.5) * binWidth;
-      const avg  = { x, y: msg.smooth_db ? msg.smooth_db[d] : msg.power_db[d] };
-      const live = { x, y: msg.power_db[d] };
-      insertSorted(chart.data.datasets[bi].data,     avg);
-      insertSorted(chart.data.datasets[bi + 3].data, live);
+      const x   = msg.freq_start + (d + 0.5) * binWidth;
+      const avg = { x, y: msg.smooth_db ? msg.smooth_db[d] : msg.power_db[d] };
+      insertSorted(chart.data.datasets[bi].data, avg);
       avgPts.push(avg);
-      livePts.push(live);
     }
-    stepSlots[msg.step] = { bi, avgPts, livePts };
+    stepSlots[msg.step] = { bi, avgPts };
   } else {
-    const { avgPts, livePts } = stepSlots[msg.step];
+    const { avgPts } = stepSlots[msg.step];
     for (let d = 0; d < msg.power_db.length; d++) {
       if (msg.smooth_db) avgPts[d].y = msg.smooth_db[d];
-      livePts[d].y = msg.power_db[d];
     }
   }
 
@@ -434,20 +414,30 @@ function applyStep(msg) {
       const key = cr.fc_mhz.toFixed(3);
       peakMap[key] = cr.peaks;
 
-      // Top peak power and pilot flag for overlay text
-      if (cr.peaks.length > 0) {
-        const top     = cr.peaks[0];  // already sorted by power desc
-        const hasPilot = cr.peaks.some(p => p.is_pilot);
-        peakDisplay[key] = { topPower: top.power_db, hasPilot };
+      // Store pilot power for overlay text (only when pilot confirmed)
+      const pilotPeak = cr.peaks.find(p => p.is_pilot);
+      if (pilotPeak) {
+        peakDisplay[key] = { hasPilot: true, pilotPower: pilotPeak.power_db };
+      } else {
+        delete peakDisplay[key];
       }
     }
     rebuildPeakDatasets();
   }
 
   maybeRescale(msg.power_db);
-  chart.update('none');
+  dirty = true;
   statusEl.textContent = `scanning… ${msg.progress_pct}%`;
 }
+
+// ── Render loop — throttle chart redraws via rAF ─────────────────────────────
+// Data arrives faster than we need to paint (114 steps/sweep). Set dirty=true
+// when data changes; rAF fires at most once per frame and does one redraw.
+let dirty = false;
+(function rafLoop() {
+  if (dirty) { chart.update('none'); dirty = false; }
+  requestAnimationFrame(rafLoop);
+})();
 
 // ── SSE ───────────────────────────────────────────────────────────────────────
 
