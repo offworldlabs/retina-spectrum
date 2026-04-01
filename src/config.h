@@ -10,7 +10,7 @@
 // SDR
 #define SAMPLE_RATE_HZ      8000000
 #define AGC_SETPOINT        -30         // dBfs AGC target
-#define RESET_TIMEOUT_MS    200         // max ms to wait for reset flag after retune
+#define RESET_TIMEOUT_MS    500         // max ms to wait for reset flag after retune
 #define FOCUS_PAUSE_MS      500         // ms to idle between focus scans (checked every 10 ms)
 
 // Channel peak detection
