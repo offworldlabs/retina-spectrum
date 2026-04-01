@@ -6,6 +6,7 @@
 #define N_DISPLAY_FOCUS 1024    // focus mode display bins (7.8 kHz/bin, GROUP=8)
 #define N_AVG           8       // FFT averages per step — reduces noise variance ~9 dB
 #define EMA_ALPHA       0.05f   // sweep-to-sweep EMA — ~20 sweeps to converge to flat noise floor
+#define FOCUS_EMA_ALPHA 0.3f    // focus-mode EMA — converges in ~3 captures (~1.5 s at 500 ms pause)
 
 // SDR
 #define SAMPLE_RATE_HZ      8000000

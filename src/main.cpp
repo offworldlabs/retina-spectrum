@@ -356,6 +356,7 @@ static void sweep_fn()
         // Reset focus EMA when the focus frequency changes
         if (is_focus && focus != focus_ema_fc) {
             focus_ema.assign(1, std::vector<float>(N_DISPLAY_FOCUS, 0.0f));
+            std::fill(focus_raw_ema.begin(), focus_raw_ema.end(), 0.0f);
             focus_ema_valid = false;
             focus_ema_fc    = focus;
         }
@@ -455,8 +456,9 @@ static void sweep_fn()
             auto& cur_ema       = is_focus ? focus_ema[0]  : sweep_ema[i];
             bool& cur_ema_valid = is_focus ? focus_ema_valid : sweep_ema_valid;
             if (cur_ema_valid) {
+                const float alpha = is_focus ? FOCUS_EMA_ALPHA : EMA_ALPHA;
                 for (int d = 0; d < (int)power.size(); d++)
-                    cur_ema[d] = EMA_ALPHA * power[d] + (1.0f - EMA_ALPHA) * cur_ema[d];
+                    cur_ema[d] = alpha * power[d] + (1.0f - alpha) * cur_ema[d];
             } else {
                 cur_ema = power;  // first pass: seed with raw
             }
@@ -466,8 +468,9 @@ static void sweep_fn()
             auto& cur_raw_ema = is_focus ? focus_raw_ema : sweep_raw_ema[i];
             bool  raw_ema_seeded = is_focus ? focus_ema_valid : sweep_raw_ema_valid;
             if (raw_ema_seeded) {
+                const float alpha = is_focus ? FOCUS_EMA_ALPHA : EMA_ALPHA;
                 for (int k = 0; k < N_FFT; k++)
-                    cur_raw_ema[k] = EMA_ALPHA * raw_db[k] + (1.0f - EMA_ALPHA) * cur_raw_ema[k];
+                    cur_raw_ema[k] = alpha * raw_db[k] + (1.0f - alpha) * cur_raw_ema[k];
             } else {
                 std::copy(raw_db, raw_db + N_FFT, cur_raw_ema.begin());
             }
