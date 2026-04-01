@@ -333,6 +333,11 @@ static void sweep_fn()
     bool  focus_ema_valid = false;
     float focus_ema_fc    = -1.0f;
 
+    // Full-resolution (N_FFT) EMA for peak detection — one buffer per sweep step.
+    std::vector<std::vector<float>> sweep_raw_ema;
+    bool  sweep_raw_ema_valid = false;
+    std::vector<float> focus_raw_ema(N_FFT, 0.0f);
+
     float last_tuned_mhz = 0.0f;  // track last hardware tune — avoid same-freq rfChanged issue
 
     while (true)  // continuous sweep loop
@@ -359,6 +364,10 @@ static void sweep_fn()
             sweep_ema.assign(total, std::vector<float>(N_DISPLAY, 0.0f));
             sweep_ema_valid = false;
             sweep_ema_total = total;
+        }
+        if (!is_focus && (int)sweep_raw_ema.size() != total) {
+            sweep_raw_ema.assign(total, std::vector<float>(N_FFT, 0.0f));
+            sweep_raw_ema_valid = false;
         }
 
         {
@@ -452,8 +461,16 @@ static void sweep_fn()
                 cur_ema = power;  // first pass: seed with raw
             }
 
-            // ── Per-channel peak detection on raw FFT bins ────────────────
+            // ── Per-channel peak detection on EMA-smoothed FFT bins ──────
             const float* raw_db = get_raw_db();
+            auto& cur_raw_ema = is_focus ? focus_raw_ema : sweep_raw_ema[i];
+            bool  raw_ema_seeded = is_focus ? focus_ema_valid : sweep_raw_ema_valid;
+            if (raw_ema_seeded) {
+                for (int k = 0; k < N_FFT; k++)
+                    cur_raw_ema[k] = EMA_ALPHA * raw_db[k] + (1.0f - EMA_ALPHA) * cur_raw_ema[k];
+            } else {
+                std::copy(raw_db, raw_db + N_FFT, cur_raw_ema.begin());
+            }
             std::vector<ChannelResult> ch_results;
             // In focus mode, analyse the single focused channel; in sweep mode,
             // analyse all channels associated with this step.
@@ -469,7 +486,7 @@ static void sweep_fn()
                 float hi_mhz = ch->fc_mhz + ch->bw_mhz * 0.5f;
                 // FM: pilot_mhz=0 in table — use channel centre as detection target
                 float pilot = (ch->pilot_mhz > 0.0f) ? ch->pilot_mhz : ch->fc_mhz;
-                auto peaks = find_channel_peaks(raw_db, N_FFT, fc_mhz,
+                auto peaks = find_channel_peaks(cur_raw_ema.data(), N_FFT, fc_mhz,
                                                 lo_mhz, hi_mhz,
                                                 pilot, ch->tol_mhz, NUM_CHANNEL_PEAKS);
                 ch_results.push_back({ch, std::move(peaks)});
@@ -517,8 +534,9 @@ static void sweep_fn()
         }
 
         // Mark EMA as having history after the first complete pass
-        sweep_ema_valid = true;
-        focus_ema_valid = true;
+        sweep_ema_valid     = true;
+        sweep_raw_ema_valid = true;
+        focus_ema_valid     = true;
 
         {
             std::lock_guard<std::mutex> lk(g_state.mtx);
