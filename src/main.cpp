@@ -480,14 +480,11 @@ static void sweep_fn()
             // ── Frequency window for this slice ───────────────────────────
             float freq_start, freq_stop;
             if (is_focus) {
-                const Channel* ch = find_channel(fc_mhz);
-                if (ch) {
-                    freq_start = ch->fc_mhz - ch->bw_mhz * 0.5f;
-                    freq_stop  = ch->fc_mhz + ch->bw_mhz * 0.5f;
-                } else {
-                    freq_start = fc_mhz - 4.0f;
-                    freq_stop  = fc_mhz + 4.0f;
-                }
+                // Always use the actual ±4 MHz capture window so the frontend
+                // maps bins to frequencies correctly (binWidth = 8/N_DISPLAY_FOCUS).
+                // The x-axis is set separately by setAxisFocusChannel() on the client.
+                freq_start = fc_mhz - 4.0f;
+                freq_stop  = fc_mhz + 4.0f;
             } else {
                 freq_start = fc_mhz - TRIM_HALF_MHZ;
                 freq_stop  = fc_mhz + TRIM_HALF_MHZ;
