@@ -18,6 +18,7 @@
 static fftwf_complex *s_fft_buf = nullptr;
 static fftwf_plan     s_plan    = nullptr;
 static float          s_window[N_FFT];
+static float          s_linear[N_FFT];   // heap-allocated via static — avoids 32 KB stack frame
 static bool           s_init    = false;
 
 static void dsp_init()
@@ -29,8 +30,9 @@ static void dsp_init()
         exit(1);
     }
 
-    // in-place forward DFT
-    s_plan = fftwf_plan_dft_1d(N_FFT, s_fft_buf, s_fft_buf, FFTW_FORWARD, FFTW_ESTIMATE);
+    // in-place forward DFT — FFTW_MEASURE benchmarks algorithms at startup (~seconds)
+    // for a faster plan on this specific hardware; output is mathematically identical.
+    s_plan = fftwf_plan_dft_1d(N_FFT, s_fft_buf, s_fft_buf, FFTW_FORWARD, FFTW_MEASURE);
     if (!s_plan)
     {
         std::cerr << "Error: fftwf_plan_dft_1d failed" << std::endl;
@@ -57,7 +59,6 @@ std::array<float, N_DISPLAY> process_step(
     if (!s_init) dsp_init();
 
     constexpr int GROUP = N_FFT / N_DISPLAY;
-    float linear[N_FFT];
     std::array<float, N_DISPLAY> acc{};  // linear power accumulator across N_AVG FFTs
 
     for (int avg = 0; avg < N_AVG; avg++)
@@ -83,7 +84,7 @@ std::array<float, N_DISPLAY> process_step(
             int ks = (k + N_FFT / 2 + 1) % N_FFT;
             float re = s_fft_buf[ks][0];
             float im = s_fft_buf[ks][1];
-            linear[k] = re * re + im * im;
+            s_linear[k] = re * re + im * im;
         }
 
         // ── 4. Decimate: peak-detect within each display bin group ───────
@@ -94,8 +95,8 @@ std::array<float, N_DISPLAY> process_step(
         {
             float peak = 0.0f;
             for (int g = 0; g < GROUP; g++)
-                if (linear[d * GROUP + g] > peak)
-                    peak = linear[d * GROUP + g];
+                if (s_linear[d * GROUP + g] > peak)
+                    peak = s_linear[d * GROUP + g];
             acc[d] += peak;
         }
     }
@@ -123,7 +124,6 @@ std::array<float, N_DISPLAY_FOCUS> process_step_focus(
     if (!s_init) dsp_init();
 
     constexpr int GROUP = N_FFT / N_DISPLAY_FOCUS;  // = 8 FFT bins per display bin
-    float linear[N_FFT];
     std::array<float, N_DISPLAY_FOCUS> acc{};
 
     for (int avg = 0; avg < N_AVG; avg++)
@@ -143,15 +143,15 @@ std::array<float, N_DISPLAY_FOCUS> process_step_focus(
             int ks = (k + N_FFT / 2 + 1) % N_FFT;
             float re = s_fft_buf[ks][0];
             float im = s_fft_buf[ks][1];
-            linear[k] = re * re + im * im;
+            s_linear[k] = re * re + im * im;
         }
 
         for (int d = 0; d < N_DISPLAY_FOCUS; d++)
         {
             float peak = 0.0f;
             for (int g = 0; g < GROUP; g++)
-                if (linear[d * GROUP + g] > peak)
-                    peak = linear[d * GROUP + g];
+                if (s_linear[d * GROUP + g] > peak)
+                    peak = s_linear[d * GROUP + g];
             acc[d] += peak;
         }
     }
