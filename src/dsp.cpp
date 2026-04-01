@@ -15,11 +15,13 @@
 
 // Static resources — allocated once, reused across steps.
 // Safe: only the sweep thread ever calls process_step().
-static fftwf_complex *s_fft_buf = nullptr;
-static fftwf_plan     s_plan    = nullptr;
+static fftwf_complex *s_fft_buf   = nullptr;
+static fftwf_plan     s_plan      = nullptr;
 static float          s_window[N_FFT];
-static float          s_linear[N_FFT];   // heap-allocated via static — avoids 32 KB stack frame
-static bool           s_init    = false;
+static float          s_linear[N_FFT];    // per-FFT fftshifted magnitude², heap via static
+static float          s_raw_acc[N_FFT];   // accumulator across N_AVG FFTs (linear power)
+static float          s_raw_db[N_FFT];    // averaged dBFS — exposed via get_raw_db()
+static bool           s_init      = false;
 
 static void dsp_init()
 {
@@ -59,7 +61,8 @@ std::array<float, N_DISPLAY> process_step(
     if (!s_init) dsp_init();
 
     constexpr int GROUP = N_FFT / N_DISPLAY;
-    std::array<float, N_DISPLAY> acc{};  // linear power accumulator across N_AVG FFTs
+    std::array<float, N_DISPLAY> acc{};  // display bin accumulator across N_AVG FFTs
+    for (int k = 0; k < N_FFT; k++) s_raw_acc[k] = 0.0f;  // reset raw accumulator
 
     for (int avg = 0; avg < N_AVG; avg++)
     {
@@ -78,13 +81,14 @@ std::array<float, N_DISPLAY> process_step(
         // ── 2. FFT ────────────────────────────────────────────────────────
         fftwf_execute(s_plan);
 
-        // ── 3. fftshift + magnitude squared ──────────────────────────────
+        // ── 3. fftshift + magnitude squared + raw accumulate ─────────────
         for (int k = 0; k < N_FFT; k++)
         {
             int ks = (k + N_FFT / 2 + 1) % N_FFT;
             float re = s_fft_buf[ks][0];
             float im = s_fft_buf[ks][1];
-            s_linear[k] = re * re + im * im;
+            s_linear[k]   = re * re + im * im;
+            s_raw_acc[k] += s_linear[k];  // full-resolution accumulation for peak detection
         }
 
         // ── 4. Decimate: peak-detect within each display bin group ───────
@@ -104,6 +108,11 @@ std::array<float, N_DISPLAY> process_step(
     // ── 5. Average across N_AVG FFTs, then dBFS ──────────────────────────────
     //    dBFS = 10*log10(power / N_FFT²),  norm accounts for FFT scaling
     const float norm = (float)N_FFT * (float)N_FFT;
+    for (int k = 0; k < N_FFT; k++)
+    {
+        float p = (s_raw_acc[k] / N_AVG) / norm;
+        s_raw_db[k] = (p > 0.0f) ? 10.0f * log10f(p) : -120.0f;
+    }
     std::array<float, N_DISPLAY> display;
     for (int d = 0; d < N_DISPLAY; d++)
     {
@@ -125,6 +134,7 @@ std::array<float, N_DISPLAY_FOCUS> process_step_focus(
 
     constexpr int GROUP = N_FFT / N_DISPLAY_FOCUS;  // = 8 FFT bins per display bin
     std::array<float, N_DISPLAY_FOCUS> acc{};
+    for (int k = 0; k < N_FFT; k++) s_raw_acc[k] = 0.0f;
 
     for (int avg = 0; avg < N_AVG; avg++)
     {
@@ -143,7 +153,8 @@ std::array<float, N_DISPLAY_FOCUS> process_step_focus(
             int ks = (k + N_FFT / 2 + 1) % N_FFT;
             float re = s_fft_buf[ks][0];
             float im = s_fft_buf[ks][1];
-            s_linear[k] = re * re + im * im;
+            s_linear[k]   = re * re + im * im;
+            s_raw_acc[k] += s_linear[k];
         }
 
         for (int d = 0; d < N_DISPLAY_FOCUS; d++)
@@ -157,6 +168,11 @@ std::array<float, N_DISPLAY_FOCUS> process_step_focus(
     }
 
     const float norm = (float)N_FFT * (float)N_FFT;
+    for (int k = 0; k < N_FFT; k++)
+    {
+        float p = (s_raw_acc[k] / N_AVG) / norm;
+        s_raw_db[k] = (p > 0.0f) ? 10.0f * log10f(p) : -120.0f;
+    }
     std::array<float, N_DISPLAY_FOCUS> display;
     for (int d = 0; d < N_DISPLAY_FOCUS; d++)
     {
@@ -176,4 +192,62 @@ std::array<float, N_DISPLAY> freq_axis(float fc_mhz)
     for (int d = 0; d < N_DISPLAY; d++)
         freqs[d] = f_start + (d + 0.5f) * bin_width;
     return freqs;
+}
+
+// ── Channel peak detection ────────────────────────────────────────────────────
+
+const float* get_raw_db()
+{
+    return s_raw_db;
+}
+
+// Find the top num_peaks local-maximum peaks within [ch_lo_mhz, ch_hi_mhz].
+// Operates on the full-resolution N_FFT dBFS array from the last DSP step.
+// Peaks are sorted by power descending. pilot_mhz=0.0 skips the pilot check.
+std::vector<ChannelPeak> find_channel_peaks(
+    const float* raw_db,
+    int          n_fft,
+    float        step_fc_mhz,
+    float        ch_lo_mhz,
+    float        ch_hi_mhz,
+    float        pilot_mhz,
+    int          num_peaks)
+{
+    // Bin width in MHz
+    const float bin_mhz = (float)SAMPLE_RATE_HZ / 1e6f / n_fft;  // ~0.000977 MHz
+
+    // Convert channel edges to indices in the fftshifted raw_db array.
+    // raw_db[n_fft/2] ≈ DC (step_fc_mhz). Positive offset → higher index.
+    auto freq_to_idx = [&](float f_mhz) -> int {
+        int idx = n_fft / 2 + (int)roundf((f_mhz - step_fc_mhz) / bin_mhz);
+        return std::max(1, std::min(n_fft - 2, idx));
+    };
+
+    int lo = freq_to_idx(ch_lo_mhz);
+    int hi = freq_to_idx(ch_hi_mhz);
+    if (lo >= hi) return {};
+
+    // Collect local maxima: raw_db[k] > both neighbours
+    struct Candidate { int idx; float power; };
+    std::vector<Candidate> candidates;
+    for (int k = lo + 1; k < hi; k++)
+        if (raw_db[k] > raw_db[k - 1] && raw_db[k] > raw_db[k + 1])
+            candidates.push_back({k, raw_db[k]});
+
+    // Sort by power descending, keep top num_peaks
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Candidate& a, const Candidate& b){ return a.power > b.power; });
+    if ((int)candidates.size() > num_peaks)
+        candidates.resize(num_peaks);
+
+    // Convert to ChannelPeak results
+    std::vector<ChannelPeak> result;
+    result.reserve(candidates.size());
+    for (auto& c : candidates)
+    {
+        float freq_mhz = step_fc_mhz + (c.idx - n_fft / 2) * bin_mhz;
+        bool  is_pilot = (pilot_mhz > 0.0f) && (fabsf(freq_mhz - pilot_mhz) <= PILOT_TOL_MHZ);
+        result.push_back({freq_mhz, c.power, is_pilot});
+    }
+    return result;
 }

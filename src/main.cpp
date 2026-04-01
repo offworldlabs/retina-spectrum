@@ -1,6 +1,7 @@
 // retina-spectrum — FM/VHF/UHF ATSC sweep binary
 // Sweep bands, serve spectrum as JSON + SSE, display via Chart.js
 
+#include "channels.h"
 #include "config.h"
 #include "dsp.h"
 #include "sdr.h"
@@ -25,38 +26,112 @@
 
 using namespace std::chrono_literals;
 
-// ── Sweep bands ───────────────────────────────────────────────────────────────
+// ── Channel-based sweep steps ─────────────────────────────────────────────────
+//
+// FM:  8 × 3 MHz steps, each covering ~15 FM channels within ±1.5 MHz trim window.
+//      Pilot detection: find peak in each 200 kHz channel window (no fixed offset).
+// TV:  one step per channel centre. ATSC pilot at lower_edge + 0.31 MHz (= fc − 2.69 MHz).
+//      Total: 8 FM + 6 VHF-lo + 7 VHF-hi + 38 UHF = 59 steps.
 
+struct Step {
+    float fc_mhz;
+    const char *band;
+    std::vector<const Channel*> channels;  // channels to analyse in this step
+};
+
+// Band table — same 3 MHz integer grid as main branch.
+// Each step serves the centre 24/64 bins (±1.5 MHz flat region of Zero-IF filter).
+// Steps tile gaplessly; ATSC pilots (lower_edge+0.31 MHz) land 0.31–0.69 MHz
+// from a step centre → display bin 32±2–6, well inside TRIM_LO=20..TRIM_HI=44.
 struct Band { const char *name; int start_mhz; int stop_mhz; int step_mhz; };
-
-// Integer MHz to avoid float comparison issues in loop bounds
-// Step = 3 MHz: matches Zero-IF 8MS/s usable flat region (RSP manual p.21)
 static const Band BANDS[] = {
-    {"fm",   88,  108,  3},   //  7 steps: 88..108  (covers 86.5–109.5 MHz ±1.5)
-    {"vhf", 174,  216,  3},   //  8 steps: 174..216 (covers 172.5–217.5 MHz ±1.5, ch7–13)
-    {"uhf", 468,  693,  3},   // 76 steps: 468..693 (covers 466.5–694.5 MHz ±1.5)
-};                            // 106 steps — centre 24/64 bins served (±1.5 MHz flat region)
-
-struct Step { float fc_mhz; const char *band; };
+    {"vhf_lo",  44,  88, 3},  // VHF ch1–6
+    {"fm",      88, 108, 3},  // FM 88.1–107.9
+    {"vhf_hi", 174, 216, 3},  // VHF ch7–13
+    {"uhf",    468, 698, 3},  // UHF ch14–51
+};
 
 static std::vector<Step> build_steps()
 {
     std::vector<Step> steps;
-    for (auto& b : BANDS)
-        for (int fc = b.start_mhz; fc <= b.stop_mhz; fc += b.step_mhz)
-            steps.push_back({(float)fc, b.name});
+    for (auto& b : BANDS) {
+        for (int fc_i = b.start_mhz; fc_i <= b.stop_mhz; fc_i += b.step_mhz) {
+            float fc = (float)fc_i;
+            Step s; s.fc_mhz = fc; s.band = b.name;
+
+            // FM: associate channels whose centre falls within ±1.5 MHz
+            for (int j = 0; j < N_FM_CHANNELS; j++)
+                if (fabsf(FM_CHANNELS[j].fc_mhz - fc) < 1.5f)
+                    s.channels.push_back(&FM_CHANNELS[j]);
+            // TV: associate channels whose pilot frequency falls within ±1.5 MHz
+            for (int j = 0; j < N_VHF_LO_CHANNELS; j++)
+                if (fabsf(VHF_LO_CHANNELS[j].pilot_mhz - fc) < 1.5f)
+                    s.channels.push_back(&VHF_LO_CHANNELS[j]);
+            for (int j = 0; j < N_VHF_HI_CHANNELS; j++)
+                if (fabsf(VHF_HI_CHANNELS[j].pilot_mhz - fc) < 1.5f)
+                    s.channels.push_back(&VHF_HI_CHANNELS[j]);
+            for (int j = 0; j < N_UHF_CHANNELS; j++)
+                if (fabsf(UHF_CHANNELS[j].pilot_mhz - fc) < 1.5f)
+                    s.channels.push_back(&UHF_CHANNELS[j]);
+
+            steps.push_back(std::move(s));
+        }
+    }
     std::cerr << "[sweep] " << steps.size() << " steps total" << std::endl;
     return steps;
 }
 
+// ── Channel lookup helpers ────────────────────────────────────────────────────
+
+// Snap a frequency to the nearest channel centre across all band tables.
+static float snap_to_channel(float fc_mhz)
+{
+    float best_dist = 1e9f, best_fc = fc_mhz;
+    auto check = [&](const Channel* tbl, int n) {
+        for (int i = 0; i < n; i++) {
+            float d = fabsf(tbl[i].fc_mhz - fc_mhz);
+            if (d < best_dist) { best_dist = d; best_fc = tbl[i].fc_mhz; }
+        }
+    };
+    check(FM_CHANNELS,     N_FM_CHANNELS);
+    check(VHF_LO_CHANNELS, N_VHF_LO_CHANNELS);
+    check(VHF_HI_CHANNELS, N_VHF_HI_CHANNELS);
+    check(UHF_CHANNELS,    N_UHF_CHANNELS);
+    return best_fc;
+}
+
+// Find the Channel entry whose centre is within 0.15 MHz of fc_mhz.
+static const Channel* find_channel(float fc_mhz)
+{
+    const Channel* best = nullptr;
+    float best_dist = 0.15f;
+    auto check = [&](const Channel* tbl, int n) {
+        for (int i = 0; i < n; i++) {
+            float d = fabsf(tbl[i].fc_mhz - fc_mhz);
+            if (d < best_dist) { best_dist = d; best = &tbl[i]; }
+        }
+    };
+    check(FM_CHANNELS,     N_FM_CHANNELS);
+    check(VHF_LO_CHANNELS, N_VHF_LO_CHANNELS);
+    check(VHF_HI_CHANNELS, N_VHF_HI_CHANNELS);
+    check(UHF_CHANNELS,    N_UHF_CHANNELS);
+    return best;
+}
+
 // ── Ring buffer ───────────────────────────────────────────────────────────────
+
+struct ChannelResult {
+    const Channel*           ch;
+    std::vector<ChannelPeak> peaks;
+};
 
 struct Slice {
     float fc_mhz         = 0;
     float freq_start_mhz = 0;
     float freq_stop_mhz  = 0;
-    std::vector<float> power_db;   // raw (current sweep)
-    std::vector<float> smooth_db;  // EMA-smoothed
+    std::vector<float>         power_db;        // raw (current sweep)
+    std::vector<float>         smooth_db;       // EMA-smoothed
+    std::vector<ChannelResult> channel_results; // per-channel peak detection
     bool  valid          = false;
 };
 
@@ -134,23 +209,43 @@ static void append_bins(std::ostringstream& ss,
     ss << ']';
 }
 
-// full_bins=true → serve all 64 bins ±4 MHz (focus mode)
+// full_bins=true → serve all display bins (focus mode, ±4 MHz)
 // full_bins=false → serve centre 24 bins ±1.5 MHz (sweep mode)
 static std::string slice_to_sse(int step, const Slice& sl, int pct, bool full_bins = false)
 {
-    const float half = full_bins ? 4.0f : TRIM_HALF_MHZ;
-    const int   lo   = full_bins ? 0    : TRIM_LO;
-    const int   hi   = full_bins ? (int)sl.power_db.size() : TRIM_HI;
+    const int lo = full_bins ? 0    : TRIM_LO;
+    const int hi = full_bins ? (int)sl.power_db.size() : TRIM_HI;
     std::ostringstream ss;
     ss << "data: {\"type\":\"step\""
        << ",\"step\":"         << step
        << ",\"fc_mhz\":"       << sl.fc_mhz
-       << ",\"freq_start\":"   << (sl.fc_mhz - half)
-       << ",\"freq_stop\":"    << (sl.fc_mhz + half)
+       << ",\"freq_start\":"   << sl.freq_start_mhz
+       << ",\"freq_stop\":"    << sl.freq_stop_mhz
        << ",\"progress_pct\":" << pct
        << ",\"power_db\":";   append_bins(ss, sl.power_db,  lo, hi);
     ss << ",\"smooth_db\":";  append_bins(ss, sl.smooth_db, lo, hi);
-    ss << "}\n\n";
+
+    // Per-channel pilot detection results
+    ss << ",\"channels\":[";
+    for (int ci = 0; ci < (int)sl.channel_results.size(); ci++) {
+        const auto& cr = sl.channel_results[ci];
+        if (ci > 0) ss << ',';
+        ss << "{\"band\":\"" << cr.ch->band << "\""
+           << ",\"number\":"     << cr.ch->number
+           << ",\"fc_mhz\":"     << cr.ch->fc_mhz
+           << ",\"pilot_mhz\":"  << cr.ch->pilot_mhz
+           << ",\"peaks\":[";
+        for (int pi = 0; pi < (int)cr.peaks.size(); pi++) {
+            const auto& pk = cr.peaks[pi];
+            if (pi > 0) ss << ',';
+            ss << "{\"freq_mhz\":" << pk.freq_mhz
+               << ",\"power_db\":" << pk.power_db
+               << ",\"is_pilot\":"  << (pk.is_pilot ? "true" : "false")
+               << '}';
+        }
+        ss << "]}";
+    }
+    ss << "]}\n\n";
     return ss.str();
 }
 
@@ -183,14 +278,14 @@ static void sse_close_all()
 struct MockStation { float freq_mhz; float amplitude; };
 
 static const MockStation MOCK_STATIONS[] = {
-    {  89.1f, 300.0f },   // FM weak
-    {  95.8f, 150.0f },   // FM medium
-    {  98.8f, 800.0f },   // FM strong (primary test peak)
-    { 103.5f, 100.0f },   // FM weak
-    { 198.31f, 500.0f },  // VHF ch11 ATSC pilot (198.31 MHz)
-    { 210.31f, 400.0f },  // VHF ch13 ATSC pilot (210.31 MHz)
-    { 530.0f, 600.0f },   // DVB-T UHF ch28
-    { 610.0f, 450.0f },   // DVB-T UHF ch38
+    {  89.1f,   300.0f },  // FM weak         (ch 89.1 MHz)
+    {  95.9f,   150.0f },  // FM medium        (ch 95.9 MHz)
+    {  98.7f,   800.0f },  // FM strong        (ch 98.7 MHz, primary test peak)
+    { 103.5f,   100.0f },  // FM weak          (ch 103.5 MHz)
+    { 198.31f,  500.0f },  // VHF ch11 ATSC pilot (lower 198 + 0.31)
+    { 210.31f,  400.0f },  // VHF ch13 ATSC pilot (lower 210 + 0.31)
+    { 530.31f,  600.0f },  // UHF ch24 ATSC pilot (lower 530 + 0.31, center 533)
+    { 614.31f,  450.0f },  // UHF ch38 ATSC pilot (lower 614 + 0.31, center 617)
 };
 
 static std::vector<std::complex<float>> mock_iq(float fc_mhz)
@@ -361,12 +456,50 @@ static void sweep_fn()
                 cur_ema = power;  // first pass: seed with raw
             }
 
+            // ── Per-channel peak detection on raw FFT bins ────────────────
+            const float* raw_db = get_raw_db();
+            std::vector<ChannelResult> ch_results;
+            // In focus mode, analyse the single focused channel; in sweep mode,
+            // analyse all channels associated with this step.
+            std::vector<const Channel*> step_channels;
+            if (is_focus) {
+                const Channel* ch = find_channel(fc_mhz);
+                if (ch) step_channels.push_back(ch);
+            } else {
+                step_channels = steps[i].channels;
+            }
+            for (const Channel* ch : step_channels) {
+                float lo_mhz = ch->fc_mhz - ch->bw_mhz * 0.5f;
+                float hi_mhz = ch->fc_mhz + ch->bw_mhz * 0.5f;
+                auto peaks = find_channel_peaks(raw_db, N_FFT, fc_mhz,
+                                                lo_mhz, hi_mhz,
+                                                ch->pilot_mhz, NUM_CHANNEL_PEAKS);
+                ch_results.push_back({ch, std::move(peaks)});
+            }
+
+            // ── Frequency window for this slice ───────────────────────────
+            float freq_start, freq_stop;
+            if (is_focus) {
+                const Channel* ch = find_channel(fc_mhz);
+                if (ch) {
+                    freq_start = ch->fc_mhz - ch->bw_mhz * 0.5f;
+                    freq_stop  = ch->fc_mhz + ch->bw_mhz * 0.5f;
+                } else {
+                    freq_start = fc_mhz - 4.0f;
+                    freq_stop  = fc_mhz + 4.0f;
+                }
+            } else {
+                freq_start = fc_mhz - TRIM_HALF_MHZ;
+                freq_stop  = fc_mhz + TRIM_HALF_MHZ;
+            }
+
             Slice sl;
             sl.fc_mhz         = fc_mhz;
-            sl.freq_start_mhz = fc_mhz - (is_focus ? 4.0f : TRIM_HALF_MHZ);
-            sl.freq_stop_mhz  = fc_mhz + (is_focus ? 4.0f : TRIM_HALF_MHZ);
+            sl.freq_start_mhz = freq_start;
+            sl.freq_stop_mhz  = freq_stop;
             sl.power_db       = power;
             sl.smooth_db      = cur_ema;
+            sl.channel_results = std::move(ch_results);
             sl.valid          = true;
 
             int pct = (i + 1) * 100 / total;
@@ -544,11 +677,12 @@ int main(int argc, char *argv[])
                 res.set_content("{\"error\":\"invalid fc\"}", "application/json");
                 return;
             }
-            if (fc != 0.0f && (fc < 50.0f || fc > 2000.0f)) {
+            if (fc != 0.0f && (fc < 40.0f || fc > 2000.0f)) {
                 res.status = 400;
-                res.set_content("{\"error\":\"fc out of range (50–2000 MHz)\"}", "application/json");
+                res.set_content("{\"error\":\"fc out of range\"}", "application/json");
                 return;
             }
+            if (fc != 0.0f) fc = snap_to_channel(fc);
             g_focus_mhz = fc;
             std::cerr << "[focus] " << (fc > 0 ? std::to_string(fc) + " MHz" : "cleared") << std::endl;
         }

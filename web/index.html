@@ -57,9 +57,10 @@
   <button id="back-btn" onclick="exitFocus()">&#8592; sweep</button>
   <span id="status">initialising…</span>
   <div class="legend">
-    <span><span class="dot" style="background:#4fc3f7"></span>FM 88–108 MHz</span>
-    <span><span class="dot" style="background:#81c784"></span>VHF 174–216 MHz</span>
-    <span><span class="dot" style="background:#ffb74d"></span>UHF 470–694 MHz</span>
+    <span><span class="dot" style="background:#4fc3f7"></span>FM 88–108</span>
+    <span><span class="dot" style="background:#81c784"></span>VHF ch1–13</span>
+    <span><span class="dot" style="background:#ffb74d"></span>UHF ch14–51</span>
+    <span><span class="dot" style="background:#4ade80;border:2px solid #4ade80;background:transparent"></span>pilot</span>
     <span style="color:#475569">— avg  ··· live</span>
   </div>
 </header>
@@ -71,8 +72,140 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
 
-// ── Chart — 6 datasets: [FM-smooth, VHF-smooth, UHF-smooth, FM-raw, VHF-raw, UHF-raw]
-//   Smooth = solid bright line; Raw = dim dotted line
+// ── Channel lookup tables (mirrors src/channels.h) ────────────────────────────
+
+// FM: 88.1–107.9 MHz, 200 kHz spacing, pilot=0 (peak detect only)
+const FM_CH = [];
+for (let i = 0; i < 100; i++) {
+  const fc = Math.round((88.1 + i * 0.2) * 10) / 10;
+  FM_CH.push({ band:'fm', number: Math.round(fc * 10), fc, bw: 0.2, pilot: 0 });
+}
+
+// VHF Low (ch1–6): pilot = lower_edge + 0.31 MHz
+const VHF_LO_CH = [
+  { band:'vhf_lo', number:1,  fc:47.0,  bw:6.0, pilot:44.31 },
+  { band:'vhf_lo', number:2,  fc:57.0,  bw:6.0, pilot:54.31 },
+  { band:'vhf_lo', number:3,  fc:63.0,  bw:6.0, pilot:60.31 },
+  { band:'vhf_lo', number:4,  fc:69.0,  bw:6.0, pilot:66.31 },
+  { band:'vhf_lo', number:5,  fc:79.0,  bw:6.0, pilot:76.31 },
+  { band:'vhf_lo', number:6,  fc:85.0,  bw:6.0, pilot:82.31 },
+];
+
+// VHF High (ch7–13): pilot = lower_edge + 0.31 MHz
+const VHF_HI_CH = [
+  { band:'vhf_hi', number:7,  fc:177.0, bw:6.0, pilot:174.31 },
+  { band:'vhf_hi', number:8,  fc:183.0, bw:6.0, pilot:180.31 },
+  { band:'vhf_hi', number:9,  fc:189.0, bw:6.0, pilot:186.31 },
+  { band:'vhf_hi', number:10, fc:195.0, bw:6.0, pilot:192.31 },
+  { band:'vhf_hi', number:11, fc:201.0, bw:6.0, pilot:198.31 },
+  { band:'vhf_hi', number:12, fc:207.0, bw:6.0, pilot:204.31 },
+  { band:'vhf_hi', number:13, fc:213.0, bw:6.0, pilot:210.31 },
+];
+
+// UHF (ch14–51): pilot = lower_edge + 0.31 MHz
+const UHF_CH = [];
+for (let ch = 14; ch <= 51; ch++) {
+  const lower = 470 + (ch - 14) * 6;
+  UHF_CH.push({ band:'uhf', number:ch, fc: lower + 3, bw:6.0, pilot: lower + 0.31 });
+}
+
+const ALL_CHANNELS = [...FM_CH, ...VHF_LO_CH, ...VHF_HI_CH, ...UHF_CH];
+
+// Snap a frequency to the nearest channel centre
+function snapToChannel(freq) {
+  let best = null, bestDist = Infinity;
+  for (const ch of ALL_CHANNELS) {
+    const d = Math.abs(ch.fc - freq);
+    if (d < bestDist) { bestDist = d; best = ch; }
+  }
+  return best;
+}
+
+// Find channel by exact fc match (within 0.15 MHz)
+function findChannel(fc) {
+  return ALL_CHANNELS.find(ch => Math.abs(ch.fc - fc) < 0.15) || null;
+}
+
+// ── Peak state + hover state ──────────────────────────────────────────────────
+const peakMap     = {};  // fc_key → ChannelPeak[]
+const peakDisplay = {};  // fc_key → { topPower, hasPilot }
+let   hoveredChannel = null;  // Channel object under the mouse cursor (sweep mode only)
+
+// ── Chart.js custom plugin — channel boundaries + labels + peak power text ───
+
+const channelOverlayPlugin = {
+  id: 'channelOverlay',
+  afterDraw(chart) {
+    const ctx    = chart.ctx;
+    const xScale = chart.scales.x;
+    const yScale = chart.scales.y;
+    const xMin = xScale.min, xMax = xScale.max;
+    const chartH = yScale.bottom - yScale.top;
+
+    // Decide which channels to draw boundaries + labels for
+    const isNarrow    = (xMax - xMin) < 10;  // focus mode — one channel visible
+    const channelsToShow = isNarrow ? ALL_CHANNELS : [...VHF_LO_CH, ...VHF_HI_CH, ...UHF_CH];
+
+    for (const ch of channelsToShow) {
+      const lo = ch.fc - ch.bw / 2;
+      const hi = ch.fc + ch.bw / 2;
+      if (hi < xMin || lo > xMax) continue;
+
+      const xLoPx  = Math.max(xScale.getPixelForValue(lo),  xScale.left);
+      const xHiPx  = Math.min(xScale.getPixelForValue(hi),  xScale.right);
+      const xCtrPx = xScale.getPixelForValue(ch.fc);
+      const chWidthPx = xHiPx - xLoPx;
+
+      // Hover highlight — subtle tint over the whole channel column
+      if (hoveredChannel === ch && currentMode !== 'focus') {
+        ctx.save();
+        ctx.fillStyle = 'rgba(255,255,255,0.05)';
+        ctx.fillRect(xLoPx, yScale.top, chWidthPx, chartH);
+        ctx.restore();
+      }
+
+      // Left boundary line (dashed)
+      const xBoundary = xScale.getPixelForValue(lo);
+      if (xBoundary >= xScale.left && xBoundary <= xScale.right) {
+        ctx.save();
+        ctx.strokeStyle = hoveredChannel === ch ? '#334155' : '#1e3a5f';
+        ctx.lineWidth   = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(xBoundary, yScale.top);
+        ctx.lineTo(xBoundary, yScale.bottom);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Channel label — just the number, white, horizontally centred in channel
+      if (xCtrPx >= xScale.left && xCtrPx <= xScale.right && chWidthPx > 6) {
+        const label = ch.band === 'fm' ? ch.fc.toFixed(1) : `${ch.number}`;
+        ctx.save();
+        ctx.font      = '10px Courier New';
+        ctx.fillStyle = hoveredChannel === ch ? '#ffffff' : 'rgba(255,255,255,0.35)';
+        ctx.textAlign = 'center';
+        ctx.fillText(label, xCtrPx, yScale.top + 14);
+        ctx.restore();
+      }
+    }
+
+    // Peak power text at bottom of each channel that has data
+    for (const [key, pd] of Object.entries(peakDisplay)) {
+      const fc  = parseFloat(key);
+      const xPx = xScale.getPixelForValue(fc);
+      if (xPx < xScale.left || xPx > xScale.right) continue;
+      ctx.save();
+      ctx.font      = '9px Courier New';
+      ctx.fillStyle = pd.hasPilot ? '#4ade80' : '#64748b';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${pd.topPower.toFixed(0)} dB`, xPx, yScale.bottom - 4);
+      ctx.restore();
+    }
+  }
+};
+
+// ── Chart ─────────────────────────────────────────────────────────────────────
 
 Chart.defaults.color = '#64748b';
 
@@ -80,16 +213,35 @@ const COLORS = ['#4fc3f7', '#81c784', '#ffb74d'];
 
 const chart = new Chart(document.getElementById('chart').getContext('2d'), {
   type: 'scatter',
+  plugins: [channelOverlayPlugin],
   data: {
     datasets: [
-      // smooth (averaged) — solid, full brightness
-      { label: 'FM avg',  data: [], borderColor: COLORS[0], showLine: true, pointRadius: 0, borderWidth: 2, borderDash: [] },
-      { label: 'VHF avg', data: [], borderColor: COLORS[1], showLine: true, pointRadius: 0, borderWidth: 2, borderDash: [] },
-      { label: 'UHF avg', data: [], borderColor: COLORS[2], showLine: true, pointRadius: 0, borderWidth: 2, borderDash: [] },
-      // raw (live sweep) — very dim, just to show current pass
+      // Smooth (averaged) — solid, full brightness [0–2]
+      { label: 'FM avg',  data: [], borderColor: COLORS[0], showLine: true, pointRadius: 0, borderWidth: 2 },
+      { label: 'VHF avg', data: [], borderColor: COLORS[1], showLine: true, pointRadius: 0, borderWidth: 2 },
+      { label: 'UHF avg', data: [], borderColor: COLORS[2], showLine: true, pointRadius: 0, borderWidth: 2 },
+      // Raw (live sweep) — dim dotted [3–5]
       { label: 'FM live',  data: [], borderColor: COLORS[0] + '22', showLine: true, pointRadius: 0, borderWidth: 1, borderDash: [2, 4] },
       { label: 'VHF live', data: [], borderColor: COLORS[1] + '22', showLine: true, pointRadius: 0, borderWidth: 1, borderDash: [2, 4] },
       { label: 'UHF live', data: [], borderColor: COLORS[2] + '22', showLine: true, pointRadius: 0, borderWidth: 1, borderDash: [2, 4] },
+      // Peak circles — pilot matches [6]
+      {
+        label: 'pilot', data: [],
+        type: 'scatter', showLine: false,
+        pointRadius: 8, pointStyle: 'circle',
+        pointBorderWidth: 2, pointBorderColor: '#4ade80',
+        pointBackgroundColor: 'transparent',
+        borderColor: '#4ade80',
+      },
+      // Peak circles — other peaks [7]
+      {
+        label: 'peaks', data: [],
+        type: 'scatter', showLine: false,
+        pointRadius: 5, pointStyle: 'circle',
+        pointBorderWidth: 1, pointBorderColor: '#475569',
+        pointBackgroundColor: 'transparent',
+        borderColor: '#475569',
+      },
     ]
   },
   options: {
@@ -97,22 +249,25 @@ const chart = new Chart(document.getElementById('chart').getContext('2d'), {
     responsive: true,
     maintainAspectRatio: false,
     parsing: false,
-    onClick(event, _elements, chart) {
+    onClick(event, _elements, ch) {
       if (currentMode === 'focus') return;
-      const fc = chart.scales.x.getValueForPixel(event.x);
-      if (fc != null) enterFocus(fc);
+      const freq = ch.scales.x.getValueForPixel(event.x);
+      if (freq == null) return;
+      // Only enter focus if the click lands inside a known channel boundary
+      const hit = ALL_CHANNELS.find(c => freq >= c.fc - c.bw / 2 && freq <= c.fc + c.bw / 2);
+      if (hit) enterFocus(hit.fc);
     },
     plugins: {
       legend: { display: false },
       tooltip: {
         callbacks: {
-          label: c => `${c.parsed.x.toFixed(2)} MHz  ${c.parsed.y.toFixed(1)} dBfs`
+          label: c => `${c.parsed.x.toFixed(3)} MHz  ${c.parsed.y.toFixed(1)} dBfs`
         }
       }
     },
     scales: {
       x: {
-        type: 'linear', min: 84, max: 698,
+        type: 'linear', min: 40, max: 700,
         title: { display: true, text: 'Frequency (MHz)', color: '#475569', font: { family: 'Courier New', size: 11 } },
         grid:  { color: '#1f2937' },
         ticks: { color: '#475569', font: { family: 'Courier New', size: 10 } }
@@ -127,16 +282,51 @@ const chart = new Chart(document.getElementById('chart').getContext('2d'), {
   }
 });
 
+// ── Channel hover ─────────────────────────────────────────────────────────────
+{
+  const canvas = document.getElementById('chart');
+  canvas.addEventListener('mousemove', event => {
+    if (currentMode === 'focus') return;
+    const rect = canvas.getBoundingClientRect();
+    const freq = chart.scales.x.getValueForPixel(event.clientX - rect.left);
+    if (freq == null) return;
+    const hit = ALL_CHANNELS.find(c => freq >= c.fc - c.bw / 2 && freq <= c.fc + c.bw / 2) || null;
+    if (hit !== hoveredChannel) {
+      hoveredChannel = hit;
+      canvas.style.cursor = hit ? 'pointer' : 'default';
+      chart.update('none');
+    }
+  });
+  canvas.addEventListener('mouseleave', () => {
+    if (hoveredChannel !== null) {
+      hoveredChannel = null;
+      canvas.style.cursor = 'default';
+      chart.update('none');
+    }
+  });
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const statusEl = document.getElementById('status');
 
-// FM=0, VHF=1, UHF=2
-const bandIdx = fc => fc <= 108 ? 0 : fc <= 216 ? 1 : 2;
+// Map step fc_mhz → dataset index (0=FM, 1=VHF, 2=UHF)
+function bandIdx(msg) {
+  if (msg.channels && msg.channels.length > 0) {
+    const b = msg.channels[0].band;
+    if (b === 'fm')   return 0;
+    if (b === 'uhf')  return 2;
+    return 1;  // vhf_lo, vhf_hi
+  }
+  // Fallback from fc
+  const fc = msg.fc_mhz;
+  if (fc >= 85 && fc <= 112) return 0;  // FM
+  if (fc < 170)               return 1;  // VHF_LO
+  if (fc <= 220)              return 1;  // VHF_HI
+  return 2;                              // UHF
+}
 
-// stepSlots[step] = { bi, avgPts, livePts } — direct object references into datasets.
-// New steps are inserted at the correct sorted position so mid-sweep joins never
-// cause a bridging line or blank redraw.
+// stepSlots[step] = { bi, avgPts, livePts }
 const stepSlots = {};
 
 function insertSorted(arr, pt) {
@@ -148,16 +338,34 @@ function insertSorted(arr, pt) {
   arr.splice(lo, 0, pt);
 }
 
+// Rebuild peak circle datasets from peakMap
+function rebuildPeakDatasets() {
+  const pilotPts = [], otherPts = [];
+  for (const peaks of Object.values(peakMap)) {
+    for (const pk of peaks) {
+      const pt = { x: pk.freq_mhz, y: pk.power_db };
+      if (pk.is_pilot) pilotPts.push(pt);
+      else             otherPts.push(pt);
+    }
+  }
+  chart.data.datasets[6].data = pilotPts;
+  chart.data.datasets[7].data = otherPts;
+}
+
 // ── Focus mode ────────────────────────────────────────────────────────────────
+
 const focusParam = new URLSearchParams(window.location.search).get('fc');
 const focusFc    = focusParam ? parseFloat(focusParam) : null;
-let   currentMode = null;  // 'sweep' | 'focus' — track to detect mode switches
-let   currentFc   = null;  // track focus fc — detect fc changes within focus mode
+let   currentMode = null;
+let   currentFc   = null;
+
+let seenMax = -20, seenMin = -90;
 
 function clearChart() {
   for (const ds of chart.data.datasets) ds.data = [];
-  for (const k of Object.keys(stepSlots)) delete stepSlots[k];
-  // Reset y-axis tracking so new data can rescale cleanly
+  for (const k of Object.keys(stepSlots))  delete stepSlots[k];
+  for (const k of Object.keys(peakMap))    delete peakMap[k];
+  for (const k of Object.keys(peakDisplay)) delete peakDisplay[k];
   seenMax = -20;
   seenMin = -90;
   chart.options.scales.y.max = -20;
@@ -165,26 +373,26 @@ function clearChart() {
 }
 
 function setAxisSweep() {
-  chart.options.scales.x.min = 84;
-  chart.options.scales.x.max = 698;
+  chart.options.scales.x.min = 40;
+  chart.options.scales.x.max = 700;
 }
 
-function setAxisFocus(fc) {
-  // Clip to ±3.5 MHz — hides Blackman window rolloff at the ±4 MHz edges
-  chart.options.scales.x.min = parseFloat((fc - 3.5).toFixed(2));
-  chart.options.scales.x.max = parseFloat((fc + 3.5).toFixed(2));
+// Set focus axis from channel table (called on 'start' event before first step arrives)
+function setAxisFocusChannel(fc) {
+  const ch = findChannel(fc);
+  if (ch) {
+    chart.options.scales.x.min = ch.fc - ch.bw / 2;
+    chart.options.scales.x.max = ch.fc + ch.bw / 2;
+  } else {
+    chart.options.scales.x.min = parseFloat((fc - 4).toFixed(3));
+    chart.options.scales.x.max = parseFloat((fc + 4).toFixed(3));
+  }
 }
 
 // ── Y-axis auto-scale ─────────────────────────────────────────────────────────
-// Tracks the global seen min/max across all received data.
-// Scale only ever expands — never contracts — so it stays stable.
-// Called with each step's power_db array; updates chart bounds if needed.
-let seenMax = -20;
-let seenMin = -90;
 
 function maybeRescale(values) {
-  const dMax = Math.max(...values);
-  const dMin = Math.min(...values);
+  const dMax = Math.max(...values), dMin = Math.min(...values);
   let changed = false;
   if (dMax > seenMax) { seenMax = dMax; changed = true; }
   if (dMin < seenMin) { seenMin = dMin; changed = true; }
@@ -194,30 +402,46 @@ function maybeRescale(values) {
   }
 }
 
+// ── Step rendering ────────────────────────────────────────────────────────────
+
 function applyStep(msg) {
-  const bi       = bandIdx(msg.fc_mhz);
+  const bi       = bandIdx(msg);
   const binWidth = (msg.freq_stop - msg.freq_start) / msg.power_db.length;
 
   if (stepSlots[msg.step] === undefined) {
-    // First time — insert at correct frequency position (handles mid-sweep joins)
     const avgPts = [], livePts = [];
     for (let d = 0; d < msg.power_db.length; d++) {
       const x    = msg.freq_start + (d + 0.5) * binWidth;
       const avg  = { x, y: msg.smooth_db ? msg.smooth_db[d] : msg.power_db[d] };
       const live = { x, y: msg.power_db[d] };
-      insertSorted(chart.data.datasets[bi].data,        avg);
-      insertSorted(chart.data.datasets[bi + 3].data,    live);
+      insertSorted(chart.data.datasets[bi].data,     avg);
+      insertSorted(chart.data.datasets[bi + 3].data, live);
       avgPts.push(avg);
       livePts.push(live);
     }
     stepSlots[msg.step] = { bi, avgPts, livePts };
   } else {
-    // Overwrite in place via stored object references
     const { avgPts, livePts } = stepSlots[msg.step];
     for (let d = 0; d < msg.power_db.length; d++) {
-      if (msg.smooth_db) avgPts[d].y  = msg.smooth_db[d];
+      if (msg.smooth_db) avgPts[d].y = msg.smooth_db[d];
       livePts[d].y = msg.power_db[d];
     }
+  }
+
+  // Update peak circles and power labels from channel results
+  if (msg.channels) {
+    for (const cr of msg.channels) {
+      const key = cr.fc_mhz.toFixed(3);
+      peakMap[key] = cr.peaks;
+
+      // Top peak power and pilot flag for overlay text
+      if (cr.peaks.length > 0) {
+        const top     = cr.peaks[0];  // already sorted by power desc
+        const hasPilot = cr.peaks.some(p => p.is_pilot);
+        peakDisplay[key] = { topPower: top.power_db, hasPilot };
+      }
+    }
+    rebuildPeakDatasets();
   }
 
   maybeRescale(msg.power_db);
@@ -231,8 +455,6 @@ let evtSource = null;
 
 function openEvents() {
   if (evtSource) { evtSource.close(); evtSource = null; }
-  // Reset mode/fc state so the first 'start' event always triggers clearChart+re-axis,
-  // even if the mode hasn't changed (e.g. after an SSE reconnect mid-sweep).
   currentMode = null;
   currentFc   = null;
   evtSource = new EventSource('/api/events');
@@ -242,13 +464,10 @@ function openEvents() {
     try { msg = JSON.parse(e.data); } catch { return; }
 
     if (msg.type === 'start') {
-      // Clear chart and re-axis when mode changes OR when focus fc changes.
-      // Without this, step-0 slot X coords stay from the old fc and new Y data
-      // gets painted at wrong frequencies (peaks jump by the fc delta).
       const newFc = msg.mode === 'focus' ? msg.fc : null;
       if (msg.mode !== currentMode || newFc !== currentFc) {
         clearChart();
-        if (msg.mode === 'focus') setAxisFocus(msg.fc);
+        if (msg.mode === 'focus') setAxisFocusChannel(msg.fc);
         else                      setAxisSweep();
         currentMode = msg.mode;
         currentFc   = newFc;
@@ -264,7 +483,7 @@ function openEvents() {
 
     if (msg.type === 'complete') {
       statusEl.textContent = currentMode === 'focus'
-        ? `FOCUS ${focusFc} MHz — complete`
+        ? `FOCUS ${currentFc} MHz — complete`
         : 'complete — continuing…';
     }
   };
@@ -279,20 +498,20 @@ function openEvents() {
 // ── SPA navigation ────────────────────────────────────────────────────────────
 
 async function enterFocus(fc) {
-  await fetch(`/api/focus?fc=${fc.toFixed(2)}`);
-  // pushState first time (sweep→focus), replaceState when already in focus
-  if (currentMode === 'focus') history.replaceState(null, '', `?fc=${fc.toFixed(2)}`);
-  else                         history.pushState(null, '', `?fc=${fc.toFixed(2)}`);
+  await fetch(`/api/focus?fc=${fc.toFixed(3)}`);
+  if (currentMode === 'focus') history.replaceState(null, '', `?fc=${fc.toFixed(3)}`);
+  else                         history.pushState(null, '', `?fc=${fc.toFixed(3)}`);
 }
 
 async function exitFocus() {
   await fetch('/api/focus?fc=0');
   history.pushState(null, '', location.pathname);
-  // Update UI immediately — don't wait for the SSE start:sweep event
   clearChart();
   setAxisSweep();
-  currentMode = 'sweep';
-  currentFc   = null;
+  currentMode      = 'sweep';
+  currentFc        = null;
+  hoveredChannel   = null;
+  document.getElementById('chart').style.cursor = 'default';
   document.getElementById('back-btn').style.display = 'none';
   statusEl.textContent = 'scanning…';
 }
@@ -305,7 +524,6 @@ window.addEventListener('popstate', async () => {
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 (async () => {
-  // Register focus mode with backend (or clear if plain URL)
   await fetch(`/api/focus?fc=${focusFc ?? 0}`);
   openEvents();
 })();
