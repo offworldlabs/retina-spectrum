@@ -16,6 +16,8 @@
 // Channel peak detection
 #define NUM_CHANNEL_PEAKS   3       // top local-maximum peaks to find per channel
 #define PILOT_TOL_MHZ       0.05f   // ±50 kHz tolerance for ATSC pilot frequency match
+#define PEAK_MIN_DBF        -75.0f  // minimum dBFS to flag a peak is_pilot=true
+                                    // mock noise floor ≈ -87 dBFS; real towers well above -75
 
 // Server
 #define HTTP_PORT   3020

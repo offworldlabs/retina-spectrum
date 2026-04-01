@@ -116,8 +116,7 @@ function findChannel(fc) {
 }
 
 // ── Peak state + hover state ──────────────────────────────────────────────────
-const peakMap     = {};  // fc_key → ChannelPeak[]
-const peakDisplay = {};  // fc_key → { topPower, hasPilot }
+const peakDisplay = {};  // fc_key → { hasPilot, pilotPower }
 let   hoveredChannel = null;  // Channel object under the mouse cursor (sweep mode only)
 
 // ── Chart.js custom plugin — channel boundaries + labels + peak power text ───
@@ -179,7 +178,7 @@ const channelOverlayPlugin = {
       }
     }
 
-    // Pilot power text — only for confirmed pilot matches
+    // Pilot power text — only for confirmed pilot/peak matches
     for (const [key, pd] of Object.entries(peakDisplay)) {
       if (!pd.hasPilot) continue;
       const fc  = parseFloat(key);
@@ -210,11 +209,11 @@ const chart = new Chart(document.getElementById('chart').getContext('2d'), {
       { label: 'FM avg',  data: [], borderColor: COLORS[0], showLine: true, pointRadius: 0, borderWidth: 2 },
       { label: 'VHF avg', data: [], borderColor: COLORS[1], showLine: true, pointRadius: 0, borderWidth: 2 },
       { label: 'UHF avg', data: [], borderColor: COLORS[2], showLine: true, pointRadius: 0, borderWidth: 2 },
-      // Pilot match dots [3]
+      // Confirmed pilot/peak dots [3]
       {
         label: 'pilot', data: [],
         type: 'scatter', showLine: false,
-        pointRadius: 3, pointStyle: 'circle',
+        pointRadius: 4, pointStyle: 'circle',
         pointBorderWidth: 0,
         pointBackgroundColor: '#4ade80',
         borderColor: '#4ade80',
@@ -315,16 +314,6 @@ function insertSorted(arr, pt) {
   arr.splice(lo, 0, pt);
 }
 
-// Rebuild pilot dot dataset from peakMap
-function rebuildPeakDatasets() {
-  const pilotPts = [];
-  for (const peaks of Object.values(peakMap)) {
-    for (const pk of peaks) {
-      if (pk.is_pilot) pilotPts.push({ x: pk.freq_mhz, y: pk.power_db });
-    }
-  }
-  chart.data.datasets[3].data = pilotPts;
-}
 
 // ── Focus mode ────────────────────────────────────────────────────────────────
 
@@ -338,7 +327,6 @@ let seenMax = -20, seenMin = -90;
 function clearChart() {
   for (const ds of chart.data.datasets) ds.data = [];
   for (const k of Object.keys(stepSlots))  delete stepSlots[k];
-  for (const k of Object.keys(peakMap))    delete peakMap[k];
   for (const k of Object.keys(peakDisplay)) delete peakDisplay[k];
   seenMax = -20;
   seenMin = -90;
@@ -376,6 +364,15 @@ function maybeRescale(values) {
   }
 }
 
+// Rebuild scatter dot dataset from confirmed pilot/peak entries
+function rebuildPilotDots() {
+  const pts = [];
+  for (const pd of Object.values(peakDisplay)) {
+    if (pd.hasPilot) pts.push({ x: pd.pilotFreq, y: pd.pilotPower });
+  }
+  chart.data.datasets[3].data = pts;
+}
+
 // ── Step rendering ────────────────────────────────────────────────────────────
 
 function applyStep(msg) {
@@ -402,17 +399,15 @@ function applyStep(msg) {
   if (msg.channels) {
     for (const cr of msg.channels) {
       const key = cr.fc_mhz.toFixed(3);
-      peakMap[key] = cr.peaks;
-
       // Store pilot power for overlay text (only when pilot confirmed)
       const pilotPeak = cr.peaks.find(p => p.is_pilot);
       if (pilotPeak) {
-        peakDisplay[key] = { hasPilot: true, pilotPower: pilotPeak.power_db };
+        peakDisplay[key] = { hasPilot: true, pilotPower: pilotPeak.power_db, pilotFreq: pilotPeak.freq_mhz };
       } else {
         delete peakDisplay[key];
       }
     }
-    rebuildPeakDatasets();
+    rebuildPilotDots();
   }
 
   maybeRescale(msg.power_db);

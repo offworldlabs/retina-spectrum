@@ -467,9 +467,11 @@ static void sweep_fn()
             for (const Channel* ch : step_channels) {
                 float lo_mhz = ch->fc_mhz - ch->bw_mhz * 0.5f;
                 float hi_mhz = ch->fc_mhz + ch->bw_mhz * 0.5f;
+                // FM: pilot_mhz=0 in table — use channel centre as detection target
+                float pilot = (ch->pilot_mhz > 0.0f) ? ch->pilot_mhz : ch->fc_mhz;
                 auto peaks = find_channel_peaks(raw_db, N_FFT, fc_mhz,
                                                 lo_mhz, hi_mhz,
-                                                ch->pilot_mhz, NUM_CHANNEL_PEAKS);
+                                                pilot, ch->tol_mhz, NUM_CHANNEL_PEAKS);
                 ch_results.push_back({ch, std::move(peaks)});
             }
 

@@ -49,4 +49,5 @@ std::vector<ChannelPeak> find_channel_peaks(
     float        ch_lo_mhz,
     float        ch_hi_mhz,
     float        pilot_mhz,
+    float        tol_mhz,
     int          num_peaks);

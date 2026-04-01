@@ -211,6 +211,7 @@ std::vector<ChannelPeak> find_channel_peaks(
     float        ch_lo_mhz,
     float        ch_hi_mhz,
     float        pilot_mhz,
+    float        tol_mhz,
     int          num_peaks)
 {
     // Bin width in MHz
@@ -246,7 +247,9 @@ std::vector<ChannelPeak> find_channel_peaks(
     for (auto& c : candidates)
     {
         float freq_mhz = step_fc_mhz + (c.idx - n_fft / 2) * bin_mhz;
-        bool  is_pilot = (pilot_mhz > 0.0f) && (fabsf(freq_mhz - pilot_mhz) <= PILOT_TOL_MHZ);
+        bool  is_pilot = (pilot_mhz > 0.0f)
+                      && (fabsf(freq_mhz - pilot_mhz) <= tol_mhz)
+                      && (c.power >= PEAK_MIN_DBF);
         result.push_back({freq_mhz, c.power, is_pilot});
     }
     return result;
