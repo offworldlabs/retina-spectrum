@@ -319,8 +319,9 @@ function insertSorted(arr, pt) {
 
 const focusParam = new URLSearchParams(window.location.search).get('fc');
 const focusFc    = focusParam ? parseFloat(focusParam) : null;
-let   currentMode = null;
-let   currentFc   = null;
+let   currentMode  = null;
+let   currentFc    = null;
+let   pendingClear = false;  // true while waiting for sweep 'start' after exitFocus
 
 let seenMax = -20, seenMin = -90;
 
@@ -376,6 +377,7 @@ function rebuildPilotDots() {
 // ── Step rendering ────────────────────────────────────────────────────────────
 
 function applyStep(msg) {
+  if (pendingClear) return;  // discard stale steps from previous focus cycle
   const bi       = bandIdx(msg);
   const binWidth = (msg.freq_stop - msg.freq_start) / msg.power_db.length;
 
@@ -440,8 +442,9 @@ function openEvents() {
 
     if (msg.type === 'start') {
       const newFc = msg.mode === 'focus' ? msg.fc : null;
-      if (msg.mode !== currentMode || newFc !== currentFc) {
+      if (msg.mode !== currentMode || newFc !== currentFc || pendingClear) {
         clearChart();
+        pendingClear = false;
         if (msg.mode === 'focus') setAxisFocusChannel(msg.fc);
         else                      setAxisSweep();
         currentMode = msg.mode;
@@ -482,6 +485,7 @@ async function exitFocus() {
   await fetch('/api/focus?fc=0');
   history.pushState(null, '', location.pathname);
   clearChart();
+  pendingClear     = true;   // discard any stale focus steps still in flight
   setAxisSweep();
   currentMode      = 'sweep';
   currentFc        = null;
