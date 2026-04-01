@@ -143,7 +143,8 @@ static const Channel VHF_HI_CHANNELS[7] = {
 // ── UHF (ch14–51): pilot = lower_edge + 0.31 MHz ────────────────────────────
 // Active post-2020 repack: ch14–36. Ch37 = radio astronomy (protected).
 // Ch38–51 reallocated (mobile broadband) but may still carry ATSC.
-static const Channel UHF_CHANNELS[38] = {
+// Ch14–36 only — ch37 is radio astronomy, ch38–51 reallocated to T-Mobile 600 MHz 5G (Band 71)
+static const Channel UHF_CHANNELS[23] = {
     {"uhf", 14, 473.0f, 6.0f, 470.31f, 0.05f},
     {"uhf", 15, 479.0f, 6.0f, 476.31f, 0.05f},
     {"uhf", 16, 485.0f, 6.0f, 482.31f, 0.05f},
@@ -167,24 +168,9 @@ static const Channel UHF_CHANNELS[38] = {
     {"uhf", 34, 593.0f, 6.0f, 590.31f, 0.05f},
     {"uhf", 35, 599.0f, 6.0f, 596.31f, 0.05f},
     {"uhf", 36, 605.0f, 6.0f, 602.31f, 0.05f},
-    {"uhf", 37, 611.0f, 6.0f, 608.31f, 0.05f},  // radio astronomy — include for completeness
-    {"uhf", 38, 617.0f, 6.0f, 614.31f, 0.05f},
-    {"uhf", 39, 623.0f, 6.0f, 620.31f, 0.05f},
-    {"uhf", 40, 629.0f, 6.0f, 626.31f, 0.05f},
-    {"uhf", 41, 635.0f, 6.0f, 632.31f, 0.05f},
-    {"uhf", 42, 641.0f, 6.0f, 638.31f, 0.05f},
-    {"uhf", 43, 647.0f, 6.0f, 644.31f, 0.05f},
-    {"uhf", 44, 653.0f, 6.0f, 650.31f, 0.05f},
-    {"uhf", 45, 659.0f, 6.0f, 656.31f, 0.05f},
-    {"uhf", 46, 665.0f, 6.0f, 662.31f, 0.05f},
-    {"uhf", 47, 671.0f, 6.0f, 668.31f, 0.05f},
-    {"uhf", 48, 677.0f, 6.0f, 674.31f, 0.05f},
-    {"uhf", 49, 683.0f, 6.0f, 680.31f, 0.05f},
-    {"uhf", 50, 689.0f, 6.0f, 686.31f, 0.05f},
-    {"uhf", 51, 695.0f, 6.0f, 692.31f, 0.05f},
 };
 
 static constexpr int N_FM_CHANNELS     = 100;
 static constexpr int N_VHF_LO_CHANNELS = 6;
 static constexpr int N_VHF_HI_CHANNELS = 7;
-static constexpr int N_UHF_CHANNELS    = 38;
+static constexpr int N_UHF_CHANNELS    = 23;

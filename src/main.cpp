@@ -47,7 +47,7 @@ struct Band { const char *name; int start_mhz; int stop_mhz; int step_mhz; };
 static const Band BANDS[] = {
     {"fm",      88, 108, 3},  // FM 88.1–107.9
     {"vhf_hi", 174, 216, 3},  // VHF ch7–13
-    {"uhf",    468, 698, 3},  // UHF ch14–51
+    {"uhf",    468, 608, 3},  // UHF ch14–36 (ch37+ reallocated to 5G Band 71)
 };
 
 static std::vector<Step> build_steps()
@@ -58,10 +58,7 @@ static std::vector<Step> build_steps()
             float fc = (float)fc_i;
             Step s; s.fc_mhz = fc; s.band = b.name;
 
-            // FM: associate channels whose centre falls within ±1.5 MHz
-            for (int j = 0; j < N_FM_CHANNELS; j++)
-                if (fabsf(FM_CHANNELS[j].fc_mhz - fc) < 1.5f)
-                    s.channels.push_back(&FM_CHANNELS[j]);
+            // FM pilot detection disabled for now — spectrum line still shown
             // TV: associate channels whose pilot frequency falls within ±1.5 MHz
             for (int j = 0; j < N_VHF_HI_CHANNELS; j++)
                 if (fabsf(VHF_HI_CHANNELS[j].pilot_mhz - fc) < 1.5f)

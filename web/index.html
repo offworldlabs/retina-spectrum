@@ -59,7 +59,7 @@
   <div class="legend">
     <span><span class="dot" style="background:#4fc3f7"></span>FM 88–108</span>
     <span><span class="dot" style="background:#81c784"></span>VHF ch7–13</span>
-    <span><span class="dot" style="background:#ffb74d"></span>UHF ch14–51</span>
+    <span><span class="dot" style="background:#ffb74d"></span>UHF ch14–36</span>
     <span style="color:#475569">— EMA avg</span>
   </div>
 </header>
@@ -91,9 +91,9 @@ const VHF_HI_CH = [
   { band:'vhf_hi', number:13, fc:213.0, bw:6.0, pilot:210.31 },
 ];
 
-// UHF (ch14–51): pilot = lower_edge + 0.31 MHz
+// UHF (ch14–36): pilot = lower_edge + 0.31 MHz  ch37+ = 5G Band 71
 const UHF_CH = [];
-for (let ch = 14; ch <= 51; ch++) {
+for (let ch = 14; ch <= 36; ch++) {
   const lower = 470 + (ch - 14) * 6;
   UHF_CH.push({ band:'uhf', number:ch, fc: lower + 3, bw:6.0, pilot: lower + 0.31 });
 }
