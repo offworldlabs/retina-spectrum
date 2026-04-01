@@ -9,6 +9,7 @@
 
 #include "dsp.h"
 
+#include <algorithm>
 #include <cmath>
 #include <fftw3.h>
 #include <iostream>
