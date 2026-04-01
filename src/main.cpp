@@ -438,7 +438,24 @@ static void sweep_fn()
                 }
 
                 if (!g_capture_done)
+                {
+                    // Drain any stale rfChanged still in flight from the failed
+                    // retune — if it fires during the NEXT step's capture window
+                    // the callback would clear g_waiting_rf_change and start
+                    // accumulating at the wrong frequency, causing a ~3 MHz offset.
+                    if (g_waiting_rf_change)
+                    {
+                        auto drain = std::chrono::steady_clock::now()
+                                   + std::chrono::milliseconds(100);
+                        while (g_waiting_rf_change.load() &&
+                               std::chrono::steady_clock::now() < drain)
+                            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    }
+                    g_waiting_rf_change = false;
+                    g_capture_buf.clear();
+                    g_capture_done = false;
                     continue;
+                }
 
                 std::cerr << "[sweep] captured " << g_capture_buf.size()
                           << " samples at " << fc_mhz << " MHz" << std::endl;
