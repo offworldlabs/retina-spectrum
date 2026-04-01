@@ -58,7 +58,7 @@
   <span id="status">initialising…</span>
   <div class="legend">
     <span><span class="dot" style="background:#4fc3f7"></span>FM 88–108</span>
-    <span><span class="dot" style="background:#81c784"></span>VHF ch1–13</span>
+    <span><span class="dot" style="background:#81c784"></span>VHF ch7–13</span>
     <span><span class="dot" style="background:#ffb74d"></span>UHF ch14–51</span>
     <span style="color:#475569">— EMA avg</span>
   </div>
@@ -80,16 +80,7 @@ for (let i = 0; i < 100; i++) {
   FM_CH.push({ band:'fm', number: Math.round(fc * 10), fc, bw: 0.2, pilot: 0 });
 }
 
-// VHF Low (ch1–6): pilot = lower_edge + 0.31 MHz
-const VHF_LO_CH = [
-  { band:'vhf_lo', number:1,  fc:47.0,  bw:6.0, pilot:44.31 },
-  { band:'vhf_lo', number:2,  fc:57.0,  bw:6.0, pilot:54.31 },
-  { band:'vhf_lo', number:3,  fc:63.0,  bw:6.0, pilot:60.31 },
-  { band:'vhf_lo', number:4,  fc:69.0,  bw:6.0, pilot:66.31 },
-  { band:'vhf_lo', number:5,  fc:79.0,  bw:6.0, pilot:76.31 },
-  { band:'vhf_lo', number:6,  fc:85.0,  bw:6.0, pilot:82.31 },
-];
-
+/
 // VHF High (ch7–13): pilot = lower_edge + 0.31 MHz
 const VHF_HI_CH = [
   { band:'vhf_hi', number:7,  fc:177.0, bw:6.0, pilot:174.31 },
@@ -108,7 +99,7 @@ for (let ch = 14; ch <= 51; ch++) {
   UHF_CH.push({ band:'uhf', number:ch, fc: lower + 3, bw:6.0, pilot: lower + 0.31 });
 }
 
-const ALL_CHANNELS = [...FM_CH, ...VHF_LO_CH, ...VHF_HI_CH, ...UHF_CH];
+const ALL_CHANNELS = [...FM_CH, ...VHF_HI_CH, ...UHF_CH];
 
 // Snap a frequency to the nearest channel centre
 function snapToChannel(freq) {
@@ -143,7 +134,7 @@ const channelOverlayPlugin = {
 
     // Decide which channels to draw boundaries + labels for
     const isNarrow    = (xMax - xMin) < 10;  // focus mode — one channel visible
-    const channelsToShow = isNarrow ? ALL_CHANNELS : [...VHF_LO_CH, ...VHF_HI_CH, ...UHF_CH];
+    const channelsToShow = isNarrow ? ALL_CHANNELS : [...VHF_HI_CH, ...UHF_CH];
 
     for (const ch of channelsToShow) {
       const lo = ch.fc - ch.bw / 2;
@@ -303,7 +294,7 @@ function bandIdx(msg) {
     const b = msg.channels[0].band;
     if (b === 'fm')   return 0;
     if (b === 'uhf')  return 2;
-    return 1;  // vhf_lo, vhf_hi
+    return 1;  // vhf_hi
   }
   // Fallback from fc
   const fc = msg.fc_mhz;

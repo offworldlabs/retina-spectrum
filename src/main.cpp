@@ -45,7 +45,6 @@ struct Step {
 // from a step centre → display bin 32±2–6, well inside TRIM_LO=20..TRIM_HI=44.
 struct Band { const char *name; int start_mhz; int stop_mhz; int step_mhz; };
 static const Band BANDS[] = {
-    {"vhf_lo",  44,  88, 3},  // VHF ch1–6
     {"fm",      88, 108, 3},  // FM 88.1–107.9
     {"vhf_hi", 174, 216, 3},  // VHF ch7–13
     {"uhf",    468, 698, 3},  // UHF ch14–51
@@ -64,9 +63,6 @@ static std::vector<Step> build_steps()
                 if (fabsf(FM_CHANNELS[j].fc_mhz - fc) < 1.5f)
                     s.channels.push_back(&FM_CHANNELS[j]);
             // TV: associate channels whose pilot frequency falls within ±1.5 MHz
-            for (int j = 0; j < N_VHF_LO_CHANNELS; j++)
-                if (fabsf(VHF_LO_CHANNELS[j].pilot_mhz - fc) < 1.5f)
-                    s.channels.push_back(&VHF_LO_CHANNELS[j]);
             for (int j = 0; j < N_VHF_HI_CHANNELS; j++)
                 if (fabsf(VHF_HI_CHANNELS[j].pilot_mhz - fc) < 1.5f)
                     s.channels.push_back(&VHF_HI_CHANNELS[j]);
