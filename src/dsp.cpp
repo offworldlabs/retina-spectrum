@@ -237,27 +237,23 @@ FmChannelMetrics compute_fm_metrics(
     int n  = hi - lo;
     if (n <= 0) return {0.0f, 0.0f};
 
-    // Accumulate arithmetic sum and log sum (for geometric mean) in linear domain.
-    // lin_floor prevents log(0) on silent bins.
-    const float lin_floor = 1e-12f;
-    float sum_lin    = 0.0f;
-    float sum_loglin = 0.0f;
+    // Count occupied bins (> noise_floor + 10 dB) and accumulate mean power.
+    const float sig_threshold_db = noise_db + 10.0f;
+    float sum_lin  = 0.0f;
+    int n_occupied = 0;
     for (int k = lo; k < hi; k++) {
-        float p   = std::pow(10.0f, raw_db[k] / 10.0f);
-        sum_lin    += p;
-        sum_loglin += std::log(std::max(p, lin_floor));
+        sum_lin += std::pow(10.0f, raw_db[k] / 10.0f);
+        if (raw_db[k] > sig_threshold_db) n_occupied++;
     }
 
     float arith_mean = sum_lin / n;
-    float geom_mean  = std::exp(sum_loglin / n);
+    float noise_lin  = std::pow(10.0f, noise_db / 10.0f);
+    float snr_db     = (arith_mean > noise_lin && noise_lin > 0.0f)
+                     ? 10.0f * std::log10(arith_mean / noise_lin)
+                     : 0.0f;
+    float occupancy  = (float)n_occupied / n;
 
-    float noise_lin = std::pow(10.0f, noise_db / 10.0f);
-    float snr_db    = (arith_mean > noise_lin && noise_lin > 0.0f)
-                    ? 10.0f * std::log10(arith_mean / noise_lin)
-                    : 0.0f;
-    float flatness  = (arith_mean > 0.0f) ? geom_mean / arith_mean : 0.0f;
-
-    return {snr_db, flatness};
+    return {snr_db, occupancy};
 }
 
 // Find the top num_peaks local-maximum peaks within [ch_lo_mhz, ch_hi_mhz].

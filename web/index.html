@@ -193,7 +193,7 @@ function computeRanking(andRedraw = true) {
   if (rankMode) {
     const scored = [...channelState.values()]
       .filter(ch => ch.band === 'fm')
-      .map(ch => ({ ch, score: ch.snr_db * ch.flatness }))
+      .map(ch => ({ ch, score: ch.snr_db * ch.occupancy }))
       .sort((a, b) => b.score - a.score);
     scored.slice(0, RANK_TOP_N).forEach((s, i) => topRankedMap.set(s.ch.fc_mhz.toFixed(1), i + 1));
   }
@@ -443,12 +443,12 @@ function renderChannelList() {
     if (ch && ch.band === 'fm') {
       const data = channelState.get(ch.fc.toFixed(1));
       if (data) {
-        const score = data.snr_db * data.flatness;
+        const score = data.snr_db * data.occupancy;
         el.innerHTML =
           `<div class="ch-row">` +
           `<span class="ch-label">${ch.fc.toFixed(1)} MHz</span>` +
           `<span class="ch-metric">SNR ${data.snr_db.toFixed(1)} dB</span>` +
-          `<span class="ch-metric">flatness ${data.flatness.toFixed(2)}</span>` +
+          `<span class="ch-metric">occ ${data.occupancy.toFixed(2)}</span>` +
           `<span class="ch-metric">score ${score.toFixed(1)}</span>` +
           `</div>`;
       } else {
@@ -468,21 +468,21 @@ function renderChannelList() {
   }
   let channels = [...channelState.values()].filter(ch => ch.band === 'fm');
   // RANK FEATURE: sort by score when rank mode active
-  if (rankMode) channels.sort((a, b) => (b.snr_db * b.flatness) - (a.snr_db * a.flatness));
+  if (rankMode) channels.sort((a, b) => (b.snr_db * b.occupancy) - (a.snr_db * a.occupancy));
   const rows = channels.map((ch, i) => {
     // RANK FEATURE: highlight top-N rows
     const key    = ch.fc_mhz.toFixed(1);
     const isTop  = topRankedMap.has(key);
     const rankSpan  = rankMode ? `<span class="ch-rank${isTop ? ' ch-top' : ''}">#${i+1}</span>` : '';
-    const scoreSpan = rankMode ? `<span class="ch-metric${isTop ? ' ch-top' : ''}">score ${(ch.snr_db * ch.flatness).toFixed(1)}</span>` : '';
+    const scoreSpan = rankMode ? `<span class="ch-metric${isTop ? ' ch-top' : ''}">score ${(ch.snr_db * ch.occupancy).toFixed(1)}</span>` : '';
     return `<div class="ch-row${isTop ? ' ch-row-top' : ''}">` +
       rankSpan +
       `<span class="ch-label${isTop ? ' ch-top' : ''}">${key} MHz</span>` +
       `<span class="ch-metric">SNR ${ch.snr_db.toFixed(1)} dB</span>` +
-      `<span class="ch-metric">flat ${ch.flatness.toFixed(2)}</span>` +
+      `<span class="ch-metric">occ ${ch.occupancy.toFixed(2)}</span>` +
       scoreSpan +
       `</div>`;
-    // END RANK FEATURE (non-rank version: just label/SNR/flatness, no rankSpan/scoreSpan/isTop)
+    // END RANK FEATURE (non-rank version: just label/SNR/occupancy, no rankSpan/scoreSpan/isTop)
   });
   el.innerHTML = rows.length
     ? rows.join('')

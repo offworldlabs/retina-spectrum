@@ -274,11 +274,11 @@ TEST_CASE("noise floor estimate: uniform array returns that level", "[dsp][fm][n
 
 // ── 11. compute_fm_metrics ────────────────────────────────────────────────────
 
-TEST_CASE("FM metrics: uniform channel bins → flatness ≈ 1.0", "[dsp][fm][metrics]")
+TEST_CASE("FM metrics: uniform channel bins → occupancy ≈ 1.0", "[dsp][fm][metrics]")
 {
-    // All channel window bins equal → geometric_mean == arithmetic_mean → flatness = 1.
+    // All channel window bins 27 dB above noise (> noise+10 dB threshold) → occupancy = 1.
     const float noise_db   = -87.0f;
-    const float channel_db = -60.0f;
+    const float channel_db = -60.0f;  // 27 dB above noise
     const float fc         = 98.7f;
     const float bin_mhz    = (float)SAMPLE_RATE_HZ / 1e6f / N_FFT;
     std::vector<float> raw(N_FFT, noise_db);
@@ -288,24 +288,23 @@ TEST_CASE("FM metrics: uniform channel bins → flatness ≈ 1.0", "[dsp][fm][me
     for (int k = lo; k < hi; k++) raw[k] = channel_db;
 
     FmChannelMetrics m = compute_fm_metrics(raw.data(), N_FFT, fc, fc - 0.1f, fc + 0.1f, noise_db);
-    INFO("flatness=" << m.flatness << " snr_db=" << m.snr_db);
-    CHECK(m.flatness == Catch::Approx(1.0f).margin(0.01f));
-    CHECK(m.snr_db   >  0.0f);
+    INFO("occupancy=" << m.occupancy << " snr_db=" << m.snr_db);
+    CHECK(m.occupancy == Catch::Approx(1.0f).margin(0.01f));
+    CHECK(m.snr_db    >  0.0f);
 }
 
-TEST_CASE("FM metrics: single CW spike → low flatness, high SNR", "[dsp][fm][metrics]")
+TEST_CASE("FM metrics: single CW spike → low occupancy, high SNR", "[dsp][fm][metrics]")
 {
-    // One dominant bin at channel centre — one bin out of ~205 has all the power.
-    // geometric mean << arithmetic mean → flatness near 0.
+    // One dominant bin at channel centre — only 1 of ~205 bins above noise+10 dB.
     const float noise_db = -87.0f;
     const float fc       = 98.7f;
     std::vector<float> raw(N_FFT, noise_db);
-    raw[N_FFT / 2] = -30.0f;  // strong tone at channel centre
+    raw[N_FFT / 2] = -30.0f;  // strong tone at channel centre (57 dB above noise)
 
     FmChannelMetrics m = compute_fm_metrics(raw.data(), N_FFT, fc, fc - 0.1f, fc + 0.1f, noise_db);
-    INFO("flatness=" << m.flatness << " snr_db=" << m.snr_db);
-    CHECK(m.flatness < 0.3f);
-    CHECK(m.snr_db   > 10.0f);
+    INFO("occupancy=" << m.occupancy << " snr_db=" << m.snr_db);
+    CHECK(m.occupancy < 0.05f);
+    CHECK(m.snr_db    > 10.0f);
 }
 
 TEST_CASE("FM metrics: channel at noise floor → snr_db ≈ 0", "[dsp][fm][metrics]")

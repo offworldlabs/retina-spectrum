@@ -222,7 +222,7 @@ static std::string slice_to_sse(int step, const Slice& sl, int pct, bool full_bi
        << ",\"power_db\":";   append_bins(ss, sl.power_db,  lo, hi);
     ss << ",\"smooth_db\":";  append_bins(ss, sl.smooth_db, lo, hi);
 
-    // Per-channel results — FM emits snr_db+flatness, TV emits peaks[]
+    // Per-channel results — FM emits snr_db+occupancy, TV emits peaks[]
     ss << ",\"channels\":[";
     for (int ci = 0; ci < (int)sl.channel_results.size(); ci++) {
         const auto& cr = sl.channel_results[ci];
@@ -233,7 +233,7 @@ static std::string slice_to_sse(int step, const Slice& sl, int pct, bool full_bi
         if (cr.ch->pilot_mhz == 0.0f) {
             // FM: continuous metrics
             ss << ",\"snr_db\":"  << cr.fm.snr_db
-               << ",\"flatness\":" << cr.fm.flatness;
+               << ",\"occupancy\":" << cr.fm.occupancy;
         } else {
             // TV: pilot peak detection
             ss << ",\"pilot_mhz\":" << cr.ch->pilot_mhz
@@ -291,7 +291,7 @@ static const MockStation MOCK_STATIONS[] = {
     {  95.9f,   150.0f, 0.0f },  // FM medium CW    (ch 95.9 MHz)
     {  98.7f,   800.0f, 0.0f },  // FM strong CW    (ch 98.7 MHz, primary test peak)
     { 103.5f,   100.0f, 0.0f },  // FM weak CW      (ch 103.5 MHz)
-    { 107.1f,   600.0f, 0.2f },  // FM wideband     (ch 107.1 MHz, flatness ≈ 1.0)
+    { 107.1f,   600.0f, 0.2f },  // FM wideband     (ch 107.1 MHz, occupancy ≈ 1.0)
     { 198.31f,  500.0f, 0.0f },  // VHF ch11 ATSC pilot (lower 198 + 0.31)
     { 210.31f,  400.0f, 0.0f },  // VHF ch13 ATSC pilot (lower 210 + 0.31)
     { 530.31f,  600.0f, 0.0f },  // UHF ch24 ATSC pilot (lower 530 + 0.31, center 533)
@@ -336,7 +336,7 @@ static std::vector<std::complex<float>> mock_iq(float fc_mhz)
             // Each tone lands in exactly one FFT bin (tones are at exact bin frequencies).
             // Quadratic phase b²/num_bins spreads phases across [0, 2π] so the tones
             // don't add coherently in the time domain, keeping peak amplitude bounded.
-            // Result: ~205 bins each at the same power → flatness ≈ 1.0.
+            // Result: ~205 bins each at the same power → occupancy ≈ 1.0.
             const float bin_hz    = fs / N_FFT;
             const int   half_bins = (int)(s.bw_mhz * 0.5e6f / bin_hz);
             const int   num_bins  = 2 * half_bins + 1;
@@ -552,7 +552,7 @@ static void sweep_fn()
                 float lo_mhz = ch->fc_mhz - ch->bw_mhz * 0.5f;
                 float hi_mhz = ch->fc_mhz + ch->bw_mhz * 0.5f;
                 if (ch->pilot_mhz == 0.0f) {
-                    // FM: compute continuous metrics (SNR + spectral flatness)
+                    // FM: compute continuous metrics (SNR + occupancy)
                     FmChannelMetrics fm = compute_fm_metrics(
                         cur_raw_ema.data(), N_FFT, fc_mhz, lo_mhz, hi_mhz, step_noise_db);
                     if (fm.snr_db >= FM_MIN_REPORT_SNR)
