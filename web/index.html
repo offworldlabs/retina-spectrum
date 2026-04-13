@@ -42,6 +42,25 @@
   }
   #back-btn:hover { color: #94a3b8; border-color: #334155; }
 
+  /* ── RANK FEATURE ── remove this block to strip ranking */
+  #rank-btn {
+    display: none;
+    font-family: 'Courier New', monospace;
+    font-size: 0.8rem;
+    color: #64748b;
+    background: none;
+    border: 1px solid #1f2937;
+    border-radius: 4px;
+    padding: 3px 10px;
+    cursor: pointer;
+  }
+  #rank-btn:hover  { color: #94a3b8; border-color: #334155; }
+  #rank-btn.active { color: #4ade80; border-color: #4ade80; }
+  .ch-row-top { background: rgba(74,222,128,0.06); }
+  .ch-top     { color: #4ade80 !important; }
+  .ch-rank    { width: 28px; color: #475569; }
+  /* ── END RANK FEATURE ── */
+
   #tabs { display: flex; gap: 4px; }
   #tabs button {
     font-family: 'Courier New', monospace;
@@ -93,6 +112,9 @@
     <button id="tab-vhf_uhf" onclick="switchTab('vhf_uhf')" class="active">VHF/UHF</button>
     <button id="tab-fm"      onclick="switchTab('fm')">FM</button>
   </div>
+  <!-- RANK FEATURE: remove this button to strip ranking -->
+  <button id="rank-btn" onclick="toggleRank()">rank</button>
+  <!-- END RANK FEATURE -->
   <span id="status">initialising…</span>
   <div class="legend">
     <span><span class="dot" style="background:#4fc3f7"></span>FM 88–108</span>
@@ -161,6 +183,31 @@ const channelState = new Map();  // fc_mhz key → latest FM channel object, ins
 let   hoveredChannel = null;  // Channel object under the mouse cursor (sweep mode only)
 let   activeTab      = 'vhf_uhf';  // must be before new Chart() — used in afterDraw
 
+// ── RANK FEATURE ── remove this block + all rankMode/topRankedMap references to strip
+const RANK_TOP_N    = 7;
+let   rankMode      = false;
+const topRankedMap  = new Map();  // fc_mhz.toFixed(1) → rank number (1-based)
+
+function computeRanking(andRedraw = true) {
+  topRankedMap.clear();
+  if (rankMode) {
+    const scored = [...channelState.values()]
+      .filter(ch => ch.band === 'fm')
+      .map(ch => ({ ch, score: ch.snr_db * ch.flatness }))
+      .sort((a, b) => b.score - a.score);
+    scored.slice(0, RANK_TOP_N).forEach((s, i) => topRankedMap.set(s.ch.fc_mhz.toFixed(1), i + 1));
+  }
+  renderChannelList();
+  if (andRedraw) chart.update('none');
+}
+
+function toggleRank() {
+  rankMode = !rankMode;
+  document.getElementById('rank-btn').classList.toggle('active', rankMode);
+  computeRanking(true);
+}
+// ── END RANK FEATURE ──
+
 // ── Chart.js custom plugin — channel boundaries + labels + peak power text ───
 
 const channelOverlayPlugin = {
@@ -197,6 +244,22 @@ const channelOverlayPlugin = {
         ctx.fillRect(xLoPx, yScale.top, chWidthPx, chartH);
         ctx.restore();
       }
+
+      // RANK FEATURE: green tint + rank label for top-N FM stations
+      const rankNum = topRankedMap.get(ch.fc.toFixed(1));
+      if (rankNum !== undefined) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(74,222,128,0.09)';
+        ctx.fillRect(xLoPx, yScale.top, chWidthPx, chartH);
+        if (chWidthPx > 8) {
+          ctx.font      = '9px Courier New';
+          ctx.fillStyle = '#4ade80';
+          ctx.textAlign = 'center';
+          ctx.fillText(`#${rankNum}`, xCtrPx, yScale.bottom - 16);
+        }
+        ctx.restore();
+      }
+      // END RANK FEATURE
 
       // Left boundary line (dashed)
       const xBoundary = xScale.getPixelForValue(lo);
@@ -377,17 +440,24 @@ function renderChannelList() {
     el.innerHTML = '<span class="ch-placeholder">channel metrics — FM band only</span>';
     return;
   }
-  const rows = [];
-  for (const ch of channelState.values()) {
-    if (ch.band !== 'fm') continue;
-    rows.push(
-      `<div class="ch-row">` +
-      `<span class="ch-label">${ch.fc_mhz.toFixed(1)} MHz</span>` +
+  let channels = [...channelState.values()].filter(ch => ch.band === 'fm');
+  // RANK FEATURE: sort by score when rank mode active
+  if (rankMode) channels.sort((a, b) => (b.snr_db * b.flatness) - (a.snr_db * a.flatness));
+  const rows = channels.map((ch, i) => {
+    // RANK FEATURE: highlight top-N rows
+    const key    = ch.fc_mhz.toFixed(1);
+    const isTop  = topRankedMap.has(key);
+    const rankSpan  = rankMode ? `<span class="ch-rank${isTop ? ' ch-top' : ''}">#${i+1}</span>` : '';
+    const scoreSpan = rankMode ? `<span class="ch-metric${isTop ? ' ch-top' : ''}">score ${(ch.snr_db * ch.flatness).toFixed(1)}</span>` : '';
+    return `<div class="ch-row${isTop ? ' ch-row-top' : ''}">` +
+      rankSpan +
+      `<span class="ch-label${isTop ? ' ch-top' : ''}">${key} MHz</span>` +
       `<span class="ch-metric">SNR ${ch.snr_db.toFixed(1)} dB</span>` +
-      `<span class="ch-metric">flatness ${ch.flatness.toFixed(2)}</span>` +
-      `</div>`
-    );
-  }
+      `<span class="ch-metric">flat ${ch.flatness.toFixed(2)}</span>` +
+      scoreSpan +
+      `</div>`;
+    // END RANK FEATURE (non-rank version: just label/SNR/flatness, no rankSpan/scoreSpan/isTop)
+  });
   el.innerHTML = rows.length
     ? rows.join('')
     : '<span class="ch-placeholder">no FM channels above threshold</span>';
@@ -395,6 +465,9 @@ function renderChannelList() {
 
 function switchTab(tab) {
   activeTab = tab;
+  // RANK FEATURE: rank button only meaningful on FM tab
+  document.getElementById('rank-btn').style.display = tab === 'fm' ? 'inline-block' : 'none';
+  // END RANK FEATURE
   if (tab === 'fm') {
     chart.options.scales.x.min = 87.5;
     chart.options.scales.x.max = 108.5;
@@ -513,7 +586,7 @@ function applyStep(msg) {
         }
       }
     }
-    if (hasFm) renderChannelList();
+    if (hasFm) computeRanking(false);  // RANK FEATURE: recompute scores live; false = RAF handles redraw
     rebuildPilotDots();
   }
 
