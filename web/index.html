@@ -436,6 +436,32 @@ function updateTabButtons() {
 
 function renderChannelList() {
   const el = document.getElementById('channel-list');
+
+  // Focus mode: show metrics for the single focused channel
+  if (currentMode === 'focus' && currentFc) {
+    const ch = findChannel(currentFc);
+    if (ch && ch.band === 'fm') {
+      const data = channelState.get(ch.fc.toFixed(1));
+      if (data) {
+        const score = data.snr_db * data.flatness;
+        el.innerHTML =
+          `<div class="ch-row">` +
+          `<span class="ch-label">${ch.fc.toFixed(1)} MHz</span>` +
+          `<span class="ch-metric">SNR ${data.snr_db.toFixed(1)} dB</span>` +
+          `<span class="ch-metric">flatness ${data.flatness.toFixed(2)}</span>` +
+          `<span class="ch-metric">score ${score.toFixed(1)}</span>` +
+          `</div>`;
+      } else {
+        el.innerHTML = '<span class="ch-placeholder">awaiting metrics…</span>';
+      }
+      return;
+    }
+    // TV channel in focus
+    el.innerHTML = '<span class="ch-placeholder">TV channel — pilot detection active</span>';
+    return;
+  }
+
+  // Sweep mode
   if (activeTab !== 'fm') {
     el.innerHTML = '<span class="ch-placeholder">channel metrics — FM band only</span>';
     return;
