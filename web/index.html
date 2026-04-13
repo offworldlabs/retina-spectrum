@@ -42,6 +42,21 @@
   }
   #back-btn:hover { color: #94a3b8; border-color: #334155; }
 
+  #tabs { display: flex; gap: 4px; }
+  #tabs button {
+    font-family: 'Courier New', monospace;
+    font-size: 0.78rem;
+    background: none;
+    border: 1px solid #1f2937;
+    border-bottom: 2px solid transparent;
+    border-radius: 3px 3px 0 0;
+    padding: 3px 12px;
+    cursor: pointer;
+    color: #475569;
+  }
+  #tabs button.active { color: #e2e8f0; border-color: #334155; border-bottom-color: #4fc3f7; }
+  #tabs button:hover:not(.active) { color: #94a3b8; border-color: #334155; }
+
   .legend { display: flex; gap: 16px; margin-left: auto; font-size: 0.78rem; color: #94a3b8; }
   .legend span { display: flex; align-items: center; gap: 5px; }
   .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
@@ -55,6 +70,10 @@
 <header>
   <h1>retina-spectrum</h1>
   <button id="back-btn" onclick="exitFocus()">&#8592; sweep</button>
+  <div id="tabs">
+    <button id="tab-vhf_uhf" onclick="switchTab('vhf_uhf')" class="active">VHF/UHF</button>
+    <button id="tab-fm"      onclick="switchTab('fm')">FM</button>
+  </div>
   <span id="status">initialising…</span>
   <div class="legend">
     <span><span class="dot" style="background:#4fc3f7"></span>FM 88–108</span>
@@ -118,6 +137,7 @@ function findChannel(fc) {
 // ── Peak state + hover state ──────────────────────────────────────────────────
 const peakDisplay = {};  // fc_key → { hasPilot, pilotPower }
 let   hoveredChannel = null;  // Channel object under the mouse cursor (sweep mode only)
+let   activeTab      = 'vhf_uhf';  // must be before new Chart() — used in afterDraw
 
 // ── Chart.js custom plugin — channel boundaries + labels + peak power text ───
 
@@ -132,7 +152,11 @@ const channelOverlayPlugin = {
 
     // Decide which channels to draw boundaries + labels for
     const isNarrow    = (xMax - xMin) < 10;  // focus mode — one channel visible
-    const channelsToShow = isNarrow ? ALL_CHANNELS : [...VHF_HI_CH, ...UHF_CH];
+    const channelsToShow = isNarrow
+      ? ALL_CHANNELS
+      : activeTab === 'fm'
+        ? FM_CH
+        : [...VHF_HI_CH, ...UHF_CH];
 
     for (const ch of channelsToShow) {
       const lo = ch.fc - ch.bw / 2;
@@ -167,7 +191,10 @@ const channelOverlayPlugin = {
       }
 
       // Channel label — just the number, white, horizontally centred in channel
-      if (xCtrPx >= xScale.left && xCtrPx <= xScale.right && chWidthPx > 6) {
+      // FM tab at full-band zoom: only show label every 5th channel (1 MHz grid)
+      const fmSkipLabel = ch.band === 'fm' && activeTab === 'fm' && chWidthPx <= 20
+        && Math.round((ch.fc - 88.1) / 0.2) % 5 !== 0;
+      if (!fmSkipLabel && xCtrPx >= xScale.left && xCtrPx <= xScale.right && chWidthPx > 6) {
         const label = ch.band === 'fm' ? ch.fc.toFixed(1) : `${ch.number}`;
         ctx.save();
         ctx.font      = '10px Courier New';
@@ -243,7 +270,7 @@ const chart = new Chart(document.getElementById('chart').getContext('2d'), {
     },
     scales: {
       x: {
-        type: 'linear', min: 40, max: 700,
+        type: 'linear', min: 170, max: 615,
         title: { display: true, text: 'Frequency (MHz)', color: '#475569', font: { family: 'Courier New', size: 11 } },
         grid:  { color: '#1f2937' },
         ticks: { color: '#475569', font: { family: 'Courier New', size: 10 } }
@@ -315,6 +342,32 @@ function insertSorted(arr, pt) {
 }
 
 
+// ── Band tabs ─────────────────────────────────────────────────────────────────
+
+function updateTabButtons() {
+  document.getElementById('tab-fm').classList.toggle('active', activeTab === 'fm');
+  document.getElementById('tab-vhf_uhf').classList.toggle('active', activeTab === 'vhf_uhf');
+}
+
+function switchTab(tab) {
+  activeTab = tab;
+  if (tab === 'fm') {
+    chart.options.scales.x.min = 87.5;
+    chart.options.scales.x.max = 108.5;
+    chart.data.datasets[0].hidden = false;  // FM avg
+    chart.data.datasets[1].hidden = true;   // VHF avg
+    chart.data.datasets[2].hidden = true;   // UHF avg
+  } else {
+    chart.options.scales.x.min = 170;
+    chart.options.scales.x.max = 615;
+    chart.data.datasets[0].hidden = true;
+    chart.data.datasets[1].hidden = false;
+    chart.data.datasets[2].hidden = false;
+  }
+  updateTabButtons();
+  chart.update('none');
+}
+
 // ── Focus mode ────────────────────────────────────────────────────────────────
 
 const focusParam = new URLSearchParams(window.location.search).get('fc');
@@ -336,8 +389,7 @@ function clearChart() {
 }
 
 function setAxisSweep() {
-  chart.options.scales.x.min = 40;
-  chart.options.scales.x.max = 700;
+  switchTab(activeTab);
 }
 
 // Set focus axis from channel table (called on 'start' event before first step arrives)
@@ -451,6 +503,8 @@ function openEvents() {
         currentFc   = newFc;
         document.getElementById('back-btn').style.display =
           msg.mode === 'focus' ? 'inline-block' : 'none';
+        document.getElementById('tabs').style.display =
+          msg.mode === 'focus' ? 'none' : 'flex';
       }
       statusEl.textContent = msg.mode === 'focus'
         ? `FOCUS ${msg.fc} MHz — scanning…`
@@ -492,6 +546,7 @@ async function exitFocus() {
   hoveredChannel   = null;
   document.getElementById('chart').style.cursor = 'default';
   document.getElementById('back-btn').style.display = 'none';
+  document.getElementById('tabs').style.display = 'flex';
   statusEl.textContent = 'scanning…';
 }
 
