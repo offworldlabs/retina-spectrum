@@ -274,49 +274,130 @@ TEST_CASE("noise floor estimate: uniform array returns that level", "[dsp][fm][n
 
 // ── 11. compute_fm_metrics ────────────────────────────────────────────────────
 
-TEST_CASE("FM metrics: uniform channel bins → occupancy ≈ 1.0", "[dsp][fm][metrics]")
+// Helper: returns the number of channel bins for a 200 kHz window at fc=98.7 MHz
+static int channel_bin_count()
 {
-    // All channel window bins 27 dB above noise (> noise+10 dB threshold) → occupancy = 1.
+    const float bin_mhz = (float)SAMPLE_RATE_HZ / 1e6f / N_FFT;
+    const float fc      = 98.7f;
+    // replicate freq_to_idx logic used in compute_fm_metrics
+    int lo = (int)std::round((fc - 0.1f - (fc - (float)SAMPLE_RATE_HZ / 2e6f)) / bin_mhz);
+    int hi = (int)std::round((fc + 0.1f - (fc - (float)SAMPLE_RATE_HZ / 2e6f)) / bin_mhz);
+    lo = std::max(0, std::min(N_FFT - 1, lo));
+    hi = std::max(0, std::min(N_FFT - 1, hi));
+    return hi - lo + 1;
+}
+
+TEST_CASE("FM metrics: uniform channel → obw≈1.0, sfm≈1.0, snr>0", "[dsp][fm][metrics]")
+{
+    // Flat wideband signal: all channel bins equal, well above noise.
     const float noise_db   = -87.0f;
-    const float channel_db = -60.0f;  // 27 dB above noise
+    const float channel_db = -60.0f;
     const float fc         = 98.7f;
     const float bin_mhz    = (float)SAMPLE_RATE_HZ / 1e6f / N_FFT;
     std::vector<float> raw(N_FFT, noise_db);
 
-    int lo = N_FFT / 2 + (int)roundf(-0.1f / bin_mhz);
-    int hi = N_FFT / 2 + (int)roundf( 0.1f / bin_mhz);
-    for (int k = lo; k < hi; k++) raw[k] = channel_db;
+    int lo = N_FFT / 2 + (int)std::round(-0.1f / bin_mhz);
+    int hi = N_FFT / 2 + (int)std::round( 0.1f / bin_mhz);
+    for (int k = lo; k <= hi; k++) raw[k] = channel_db;
 
     FmChannelMetrics m = compute_fm_metrics(raw.data(), N_FFT, fc, fc - 0.1f, fc + 0.1f, noise_db);
-    INFO("occupancy=" << m.occupancy << " snr_db=" << m.snr_db);
-    CHECK(m.occupancy == Catch::Approx(1.0f).margin(0.01f));
-    CHECK(m.snr_db    >  0.0f);
+    INFO("obw_fraction=" << m.obw_fraction << " sfm=" << m.sfm << " snr_db=" << m.snr_db);
+    CHECK(m.obw_fraction >= 0.95f);
+    CHECK(m.sfm          >= 0.95f);
+    CHECK(m.snr_db       >  0.0f);
 }
 
-TEST_CASE("FM metrics: single CW spike → low occupancy, high SNR", "[dsp][fm][metrics]")
+TEST_CASE("FM metrics: CW spike → obw<0.02, sfm=0, snr>10", "[dsp][fm][metrics]")
 {
-    // One dominant bin at channel centre — only 1 of ~205 bins above noise+10 dB.
+    // Single dominant tone at channel centre.
     const float noise_db = -87.0f;
     const float fc       = 98.7f;
     std::vector<float> raw(N_FFT, noise_db);
-    raw[N_FFT / 2] = -30.0f;  // strong tone at channel centre (57 dB above noise)
+    raw[N_FFT / 2] = -30.0f;  // 57 dB above noise
 
     FmChannelMetrics m = compute_fm_metrics(raw.data(), N_FFT, fc, fc - 0.1f, fc + 0.1f, noise_db);
-    INFO("occupancy=" << m.occupancy << " snr_db=" << m.snr_db);
-    CHECK(m.occupancy < 0.05f);
-    CHECK(m.snr_db    > 10.0f);
+    INFO("obw_fraction=" << m.obw_fraction << " sfm=" << m.sfm << " snr_db=" << m.snr_db);
+    CHECK(m.obw_fraction <  0.02f);
+    CHECK(m.sfm          == Catch::Approx(0.0f).margin(0.05f));
+    CHECK(m.snr_db       >  10.0f);
 }
 
-TEST_CASE("FM metrics: channel at noise floor → snr_db ≈ 0", "[dsp][fm][metrics]")
+TEST_CASE("FM metrics: half-occupied → obw≈0.49, sfm≈1.0", "[dsp][fm][metrics]")
 {
-    // All bins at noise level — mean channel power == noise floor → SNR ≈ 0 dB.
+    // Bins 0..n/2-1 of channel at signal level, upper half at noise.
+    // OBW should cut at the signal/noise boundary (~0.49).
+    // SFM within OBW (uniform signal only) should be ≈1.0.
+    const float noise_db   = -87.0f;
+    const float channel_db = -60.0f;
+    const float fc         = 98.7f;
+    const float bin_mhz    = (float)SAMPLE_RATE_HZ / 1e6f / N_FFT;
+    std::vector<float> raw(N_FFT, noise_db);
+
+    int lo = N_FFT / 2 + (int)std::round(-0.1f / bin_mhz);
+    int hi = N_FFT / 2 + (int)std::round( 0.1f / bin_mhz);
+    int n  = hi - lo + 1;
+    // Fill lower half of channel with signal
+    for (int k = lo; k < lo + n / 2; k++) raw[k] = channel_db;
+
+    FmChannelMetrics m = compute_fm_metrics(raw.data(), N_FFT, fc, fc - 0.1f, fc + 0.1f, noise_db);
+    INFO("obw_fraction=" << m.obw_fraction << " sfm=" << m.sfm);
+    CHECK(m.obw_fraction == Catch::Approx(0.49f).margin(0.04f));
+    CHECK(m.sfm          == Catch::Approx(1.0f).margin(0.02f));
+}
+
+TEST_CASE("FM metrics: empty/noise-only → obw≈0.99, sfm≈1.0, snr≈0", "[dsp][fm][metrics]")
+{
+    // All bins at noise level. OBW is ~1.0 (noise fills full bandwidth).
+    // SNR ≈ 0 — that's the noise gate, not OBW.
     const float noise_db = -87.0f;
     const float fc       = 98.7f;
     std::vector<float> raw(N_FFT, noise_db);
 
     FmChannelMetrics m = compute_fm_metrics(raw.data(), N_FFT, fc, fc - 0.1f, fc + 0.1f, noise_db);
-    INFO("snr_db=" << m.snr_db);
-    CHECK(m.snr_db == Catch::Approx(0.0f).margin(2.0f));
+    INFO("obw_fraction=" << m.obw_fraction << " sfm=" << m.sfm << " snr_db=" << m.snr_db);
+    CHECK(m.obw_fraction >= 0.95f);
+    CHECK(m.sfm          >= 0.90f);
+    CHECK(m.snr_db       == Catch::Approx(0.0f).margin(2.0f));
+}
+
+TEST_CASE("FM metrics: two-tone → obw≈1.0, sfm<0.05", "[dsp][fm][metrics]")
+{
+    // Spikes at both channel edges: full OBW but all power in 2 bins → sfm≈0.
+    const float noise_db = -87.0f;
+    const float fc       = 98.7f;
+    const float bin_mhz  = (float)SAMPLE_RATE_HZ / 1e6f / N_FFT;
+    std::vector<float> raw(N_FFT, noise_db);
+
+    int lo = N_FFT / 2 + (int)std::round(-0.1f / bin_mhz);
+    int hi = N_FFT / 2 + (int)std::round( 0.1f / bin_mhz);
+    raw[lo]     = -40.0f;  // first bin in channel window
+    raw[hi - 1] = -40.0f;  // last bin in channel window (n = hi-lo, bins lo..hi-1)
+
+    FmChannelMetrics m = compute_fm_metrics(raw.data(), N_FFT, fc, fc - 0.1f, fc + 0.1f, noise_db);
+    INFO("obw_fraction=" << m.obw_fraction << " sfm=" << m.sfm);
+    CHECK(m.obw_fraction >= 0.95f);
+    CHECK(m.sfm          <  0.05f);
+}
+
+TEST_CASE("FM metrics: eps floor — single zero bin in OBW does not collapse sfm", "[dsp][fm][metrics]")
+{
+    // All channel bins at -60 dBFS except centre bin at -120 dBFS (effectively zero).
+    // Without ε clamp, geo_mean collapses to 0; with ε=noise_lin*0.01 sfm stays near 1.0.
+    const float noise_db   = -87.0f;
+    const float channel_db = -60.0f;
+    const float fc         = 98.7f;
+    const float bin_mhz    = (float)SAMPLE_RATE_HZ / 1e6f / N_FFT;
+    std::vector<float> raw(N_FFT, noise_db);
+
+    int lo = N_FFT / 2 + (int)std::round(-0.1f / bin_mhz);
+    int hi = N_FFT / 2 + (int)std::round( 0.1f / bin_mhz);
+    for (int k = lo; k <= hi; k++) raw[k] = channel_db;
+    raw[(lo + hi) / 2] = -120.0f;  // one effectively-zero bin inside OBW
+
+    FmChannelMetrics m = compute_fm_metrics(raw.data(), N_FFT, fc, fc - 0.1f, fc + 0.1f, noise_db);
+    INFO("obw_fraction=" << m.obw_fraction << " sfm=" << m.sfm);
+    CHECK(m.obw_fraction >= 0.95f);
+    CHECK(m.sfm          >  0.5f);  // should remain well above 0 — not collapsed
 }
 
 // ── 9. Sidelobe suppression — Blackman vs Hanning ────────────────────────────

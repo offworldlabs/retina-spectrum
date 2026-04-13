@@ -237,23 +237,59 @@ FmChannelMetrics compute_fm_metrics(
     int n  = hi - lo;
     if (n <= 0) return {0.0f, 0.0f};
 
-    // Count occupied bins (> noise_floor + 10 dB) and accumulate mean power.
-    const float sig_threshold_db = noise_db + 10.0f;
-    float sum_lin  = 0.0f;
-    int n_occupied = 0;
-    for (int k = lo; k < hi; k++) {
-        sum_lin += std::pow(10.0f, raw_db[k] / 10.0f);
-        if (raw_db[k] > sig_threshold_db) n_occupied++;
+    // 0. noise_lin first — used for both SNR and SFM ε floor
+    const float noise_lin = std::pow(10.0f, noise_db / 10.0f);
+
+    // 1. Convert channel bins to linear power
+    std::vector<float> lin(n);
+    float total = 0.0f;
+    for (int i = 0; i < n; i++) {
+        lin[i] = std::pow(10.0f, raw_db[lo + i] / 10.0f);
+        total += lin[i];
     }
 
-    float arith_mean = sum_lin / n;
-    float noise_lin  = std::pow(10.0f, noise_db / 10.0f);
-    float snr_db     = (arith_mean > noise_lin && noise_lin > 0.0f)
-                     ? 10.0f * std::log10(arith_mean / noise_lin)
-                     : 0.0f;
-    float occupancy  = (float)n_occupied / n;
+    // 2. OBW — ITU-R SM.443-4 β/2 method (99% power containment)
+    // Integrate from each edge until 0.5% of total power is consumed.
+    // Leakage-robust: sidelobe power << β_half for any realistic signal.
+    const float beta_half = 0.005f * total;
+    float cum = 0.0f;
+    int lo_cut = 0;
+    for (int i = 0; i < n; i++) {
+        cum += lin[i];
+        if (cum >= beta_half) { lo_cut = i; break; }
+    }
+    cum = 0.0f;
+    int hi_cut = n - 1;
+    for (int i = n - 1; i >= 0; i--) {
+        cum += lin[i];
+        if (cum >= beta_half) { hi_cut = i; break; }
+    }
+    const int   obw_bins     = std::max(0, hi_cut - lo_cut + 1);
+    const float obw_fraction = (float)obw_bins / n;
 
-    return {snr_db, occupancy};
+    // 3. SFM (Wiener entropy) within OBW only
+    // ε = noise_lin/100 (20 dB below noise floor): noise-consistent floor prevents
+    // log(0) collapse without materially affecting real broadcast signals.
+    float sum_lin_obw = 0.0f, sum_loglin_obw = 0.0f;
+    const float eps = noise_lin * 0.01f;
+    for (int i = lo_cut; i <= hi_cut; i++) {
+        sum_lin_obw    += lin[i];
+        sum_loglin_obw += std::log(std::max(lin[i], eps));
+    }
+    float sfm = 0.0f;
+    if (obw_bins >= 3) {
+        const float geo   = std::exp(sum_loglin_obw / obw_bins);
+        const float arith = sum_lin_obw / obw_bins;
+        sfm = (arith > 0.0f) ? geo / arith : 0.0f;
+    }
+
+    // 4. SNR — mean channel power vs noise floor
+    const float arith_all = total / n;
+    const float snr_db    = (arith_all > noise_lin && noise_lin > 0.0f)
+                          ? 10.0f * std::log10(arith_all / noise_lin)
+                          : 0.0f;
+
+    return {snr_db, obw_fraction, sfm};
 }
 
 // Find the top num_peaks local-maximum peaks within [ch_lo_mhz, ch_hi_mhz].

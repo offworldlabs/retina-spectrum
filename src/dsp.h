@@ -55,15 +55,16 @@ std::vector<ChannelPeak> find_channel_peaks(
 // ── FM channel metrics ────────────────────────────────────────────────────────
 
 struct FmChannelMetrics {
-    float snr_db;    // mean channel power relative to per-step noise floor (dB)
-    float occupancy; // fraction of channel bins > noise_floor+10dB (0=empty/CW, 1=full wideband)
+    float snr_db;      // mean channel power relative to per-step noise floor (dB)
+    float obw_fraction;// ITU-R SM.443-4 β/2 OBW as fraction of channel bandwidth [0,1]
+    float sfm;         // Wiener entropy within OBW [0,1] — ambiguity function noise-likeness proxy
 };
 
 // 25th percentile of raw_db[0..n_fft-1] converted to linear, O(n) via nth_element,
 // returned in dB. Used as the per-step noise floor reference.
 float estimate_step_noise_floor(const float* raw_db, int n_fft);
 
-// Compute SNR + occupancy for one FM channel slot [ch_lo_mhz, ch_hi_mhz].
+// Compute SNR + OBW fraction + SFM for one FM channel slot [ch_lo_mhz, ch_hi_mhz].
 //   noise_db — from estimate_step_noise_floor() for this step
 FmChannelMetrics compute_fm_metrics(
     const float* raw_db,

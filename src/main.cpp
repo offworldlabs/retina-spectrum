@@ -233,7 +233,8 @@ static std::string slice_to_sse(int step, const Slice& sl, int pct, bool full_bi
         if (cr.ch->pilot_mhz == 0.0f) {
             // FM: continuous metrics
             ss << ",\"snr_db\":"  << cr.fm.snr_db
-               << ",\"occupancy\":" << cr.fm.occupancy;
+               << ",\"obw_fraction\":" << cr.fm.obw_fraction
+               << ",\"sfm\":"         << cr.fm.sfm;
         } else {
             // TV: pilot peak detection
             ss << ",\"pilot_mhz\":" << cr.ch->pilot_mhz
@@ -287,11 +288,11 @@ struct MockStation {
 };
 
 static const MockStation MOCK_STATIONS[] = {
-    {  89.1f,   300.0f, 0.0f },  // FM weak CW      (ch 89.1 MHz)
-    {  95.9f,   150.0f, 0.0f },  // FM medium CW    (ch 95.9 MHz)
-    {  98.7f,   800.0f, 0.0f },  // FM strong CW    (ch 98.7 MHz, primary test peak)
-    { 103.5f,   100.0f, 0.0f },  // FM weak CW      (ch 103.5 MHz)
-    { 107.1f,   600.0f, 0.2f },  // FM wideband     (ch 107.1 MHz, occupancy ≈ 1.0)
+    {  89.1f,   300.0f, 0.16f },  // FM weak wideband    (ch 89.1 MHz)
+    {  95.9f,   150.0f, 0.14f },  // FM medium wideband  (ch 95.9 MHz)
+    {  98.7f,   800.0f, 0.18f },  // FM strong wideband  (ch 98.7 MHz, primary test peak)
+    { 103.5f,   100.0f, 0.0f  },  // FM dead air CW      (ch 103.5 MHz — bad illuminator)
+    { 107.1f,   600.0f, 0.18f },  // FM strong wideband  (ch 107.1 MHz)
     { 198.31f,  500.0f, 0.0f },  // VHF ch11 ATSC pilot (lower 198 + 0.31)
     { 210.31f,  400.0f, 0.0f },  // VHF ch13 ATSC pilot (lower 210 + 0.31)
     { 530.31f,  600.0f, 0.0f },  // UHF ch24 ATSC pilot (lower 530 + 0.31, center 533)
