@@ -63,6 +63,25 @@
 
   #chart-wrap { flex: 1; padding: 12px 20px 14px; min-height: 0; }
   canvas { width: 100% !important; height: 100% !important; }
+
+  #channel-list {
+    height: 130px;
+    overflow-y: auto;
+    border-top: 1px solid #1f2937;
+    padding: 4px 20px;
+    font-size: 0.75rem;
+    color: #94a3b8;
+    flex-shrink: 0;
+  }
+  .ch-row {
+    display: flex;
+    gap: 24px;
+    padding: 2px 0;
+    border-bottom: 1px solid rgba(31,41,55,0.6);
+  }
+  .ch-label  { width: 80px; color: #e2e8f0; }
+  .ch-metric { width: 130px; }
+  .ch-placeholder { color: #475569; font-style: italic; }
 </style>
 </head>
 <body>
@@ -86,6 +105,8 @@
 <div id="chart-wrap">
   <canvas id="chart"></canvas>
 </div>
+
+<div id="channel-list"><span class="ch-placeholder">awaiting data…</span></div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
@@ -135,7 +156,8 @@ function findChannel(fc) {
 }
 
 // ── Peak state + hover state ──────────────────────────────────────────────────
-const peakDisplay = {};  // fc_key → { hasPilot, pilotPower }
+const peakDisplay  = {};   // fc_key → { hasPilot, pilotPower }
+const channelState = new Map();  // fc_mhz key → latest FM channel object, insertion order preserved
 let   hoveredChannel = null;  // Channel object under the mouse cursor (sweep mode only)
 let   activeTab      = 'vhf_uhf';  // must be before new Chart() — used in afterDraw
 
@@ -349,6 +371,28 @@ function updateTabButtons() {
   document.getElementById('tab-vhf_uhf').classList.toggle('active', activeTab === 'vhf_uhf');
 }
 
+function renderChannelList() {
+  const el = document.getElementById('channel-list');
+  if (activeTab !== 'fm') {
+    el.innerHTML = '<span class="ch-placeholder">channel metrics — FM band only</span>';
+    return;
+  }
+  const rows = [];
+  for (const ch of channelState.values()) {
+    if (ch.band !== 'fm') continue;
+    rows.push(
+      `<div class="ch-row">` +
+      `<span class="ch-label">${ch.fc_mhz.toFixed(1)} MHz</span>` +
+      `<span class="ch-metric">SNR ${ch.snr_db.toFixed(1)} dB</span>` +
+      `<span class="ch-metric">flatness ${ch.flatness.toFixed(2)}</span>` +
+      `</div>`
+    );
+  }
+  el.innerHTML = rows.length
+    ? rows.join('')
+    : '<span class="ch-placeholder">no FM channels above threshold</span>';
+}
+
 function switchTab(tab) {
   activeTab = tab;
   if (tab === 'fm') {
@@ -364,6 +408,7 @@ function switchTab(tab) {
     chart.data.datasets[1].hidden = false;
     chart.data.datasets[2].hidden = false;
   }
+  renderChannelList();
   updateTabButtons();
   chart.update('none');
 }
@@ -449,18 +494,26 @@ function applyStep(msg) {
     }
   }
 
-  // Update peak circles and power labels from channel results
+  // Update channel state from results
   if (msg.channels) {
+    let hasFm = false;
     for (const cr of msg.channels) {
-      const key = cr.fc_mhz.toFixed(3);
-      // Store pilot power for overlay text (only when pilot confirmed)
-      const pilotPeak = cr.peaks.find(p => p.is_pilot);
-      if (pilotPeak) {
-        peakDisplay[key] = { hasPilot: true, pilotPower: pilotPeak.power_db, pilotFreq: pilotPeak.freq_mhz };
+      if (cr.band === 'fm') {
+        // FM: accumulate metrics for the channel list panel
+        channelState.set(cr.fc_mhz.toFixed(1), cr);
+        hasFm = true;
       } else {
-        delete peakDisplay[key];
+        // TV: pilot peak display (unchanged)
+        const key = cr.fc_mhz.toFixed(3);
+        const pilotPeak = cr.peaks && cr.peaks.find(p => p.is_pilot);
+        if (pilotPeak) {
+          peakDisplay[key] = { hasPilot: true, pilotPower: pilotPeak.power_db, pilotFreq: pilotPeak.freq_mhz };
+        } else {
+          delete peakDisplay[key];
+        }
       }
     }
+    if (hasFm) renderChannelList();
     rebuildPilotDots();
   }
 

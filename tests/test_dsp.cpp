@@ -246,6 +246,80 @@ TEST_CASE("end-to-end: tone at known frequency reads back at correct freq and dB
     CHECK(measured_dbfs < expected_dbfs + 6.0f);
 }
 
+// ── 10. estimate_step_noise_floor ────────────────────────────────────────────
+
+TEST_CASE("noise floor estimate: 25th percentile lands on noise bins, not signal bins", "[dsp][fm][noise_floor]")
+{
+    // 90% of bins at -87 dBFS (noise), top 10% at -30 dBFS (signal).
+    // 25th percentile index = N_FFT/4 = 2048, well within the 90% noise region.
+    const float noise_db  = -87.0f;
+    const float signal_db = -30.0f;
+    std::vector<float> raw(N_FFT, noise_db);
+    for (int k = N_FFT * 9 / 10; k < N_FFT; k++)
+        raw[k] = signal_db;
+
+    float result = estimate_step_noise_floor(raw.data(), N_FFT);
+    INFO("result=" << result << " dBFS, expected≈" << noise_db);
+    CHECK(result == Catch::Approx(noise_db).margin(1.0f));
+}
+
+TEST_CASE("noise floor estimate: uniform array returns that level", "[dsp][fm][noise_floor]")
+{
+    const float level = -80.0f;
+    std::vector<float> raw(N_FFT, level);
+    float result = estimate_step_noise_floor(raw.data(), N_FFT);
+    INFO("result=" << result << " dBFS, expected=" << level);
+    CHECK(result == Catch::Approx(level).margin(0.5f));
+}
+
+// ── 11. compute_fm_metrics ────────────────────────────────────────────────────
+
+TEST_CASE("FM metrics: uniform channel bins → flatness ≈ 1.0", "[dsp][fm][metrics]")
+{
+    // All channel window bins equal → geometric_mean == arithmetic_mean → flatness = 1.
+    const float noise_db   = -87.0f;
+    const float channel_db = -60.0f;
+    const float fc         = 98.7f;
+    const float bin_mhz    = (float)SAMPLE_RATE_HZ / 1e6f / N_FFT;
+    std::vector<float> raw(N_FFT, noise_db);
+
+    int lo = N_FFT / 2 + (int)roundf(-0.1f / bin_mhz);
+    int hi = N_FFT / 2 + (int)roundf( 0.1f / bin_mhz);
+    for (int k = lo; k < hi; k++) raw[k] = channel_db;
+
+    FmChannelMetrics m = compute_fm_metrics(raw.data(), N_FFT, fc, fc - 0.1f, fc + 0.1f, noise_db);
+    INFO("flatness=" << m.flatness << " snr_db=" << m.snr_db);
+    CHECK(m.flatness == Catch::Approx(1.0f).margin(0.01f));
+    CHECK(m.snr_db   >  0.0f);
+}
+
+TEST_CASE("FM metrics: single CW spike → low flatness, high SNR", "[dsp][fm][metrics]")
+{
+    // One dominant bin at channel centre — one bin out of ~205 has all the power.
+    // geometric mean << arithmetic mean → flatness near 0.
+    const float noise_db = -87.0f;
+    const float fc       = 98.7f;
+    std::vector<float> raw(N_FFT, noise_db);
+    raw[N_FFT / 2] = -30.0f;  // strong tone at channel centre
+
+    FmChannelMetrics m = compute_fm_metrics(raw.data(), N_FFT, fc, fc - 0.1f, fc + 0.1f, noise_db);
+    INFO("flatness=" << m.flatness << " snr_db=" << m.snr_db);
+    CHECK(m.flatness < 0.3f);
+    CHECK(m.snr_db   > 10.0f);
+}
+
+TEST_CASE("FM metrics: channel at noise floor → snr_db ≈ 0", "[dsp][fm][metrics]")
+{
+    // All bins at noise level — mean channel power == noise floor → SNR ≈ 0 dB.
+    const float noise_db = -87.0f;
+    const float fc       = 98.7f;
+    std::vector<float> raw(N_FFT, noise_db);
+
+    FmChannelMetrics m = compute_fm_metrics(raw.data(), N_FFT, fc, fc - 0.1f, fc + 0.1f, noise_db);
+    INFO("snr_db=" << m.snr_db);
+    CHECK(m.snr_db == Catch::Approx(0.0f).margin(2.0f));
+}
+
 // ── 9. Sidelobe suppression — Blackman vs Hanning ────────────────────────────
 
 TEST_CASE("sidelobe suppression: bins ≥4 away from a strong tone are below -50 dBFS", "[dsp][window][sidelobes]")

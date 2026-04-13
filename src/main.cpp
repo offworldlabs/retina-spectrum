@@ -58,7 +58,10 @@ static std::vector<Step> build_steps()
             float fc = (float)fc_i;
             Step s; s.fc_mhz = fc; s.band = b.name;
 
-            // FM pilot detection disabled for now — spectrum line still shown
+            // FM: associate channels whose centre falls within ±1.5 MHz trim window
+            for (int j = 0; j < N_FM_CHANNELS; j++)
+                if (fabsf(FM_CHANNELS[j].fc_mhz - fc) < 1.5f)
+                    s.channels.push_back(&FM_CHANNELS[j]);
             // TV: associate channels whose pilot frequency falls within ±1.5 MHz
             for (int j = 0; j < N_VHF_HI_CHANNELS; j++)
                 if (fabsf(VHF_HI_CHANNELS[j].pilot_mhz - fc) < 1.5f)
@@ -115,7 +118,8 @@ static const Channel* find_channel(float fc_mhz)
 
 struct ChannelResult {
     const Channel*           ch;
-    std::vector<ChannelPeak> peaks;
+    std::vector<ChannelPeak> peaks;  // TV only; empty for FM
+    FmChannelMetrics         fm;     // FM only; {0,0} for TV
 };
 
 struct Slice {
@@ -218,25 +222,33 @@ static std::string slice_to_sse(int step, const Slice& sl, int pct, bool full_bi
        << ",\"power_db\":";   append_bins(ss, sl.power_db,  lo, hi);
     ss << ",\"smooth_db\":";  append_bins(ss, sl.smooth_db, lo, hi);
 
-    // Per-channel pilot detection results
+    // Per-channel results — FM emits snr_db+flatness, TV emits peaks[]
     ss << ",\"channels\":[";
     for (int ci = 0; ci < (int)sl.channel_results.size(); ci++) {
         const auto& cr = sl.channel_results[ci];
         if (ci > 0) ss << ',';
         ss << "{\"band\":\"" << cr.ch->band << "\""
-           << ",\"number\":"     << cr.ch->number
-           << ",\"fc_mhz\":"     << cr.ch->fc_mhz
-           << ",\"pilot_mhz\":"  << cr.ch->pilot_mhz
-           << ",\"peaks\":[";
-        for (int pi = 0; pi < (int)cr.peaks.size(); pi++) {
-            const auto& pk = cr.peaks[pi];
-            if (pi > 0) ss << ',';
-            ss << "{\"freq_mhz\":" << pk.freq_mhz
-               << ",\"power_db\":" << pk.power_db
-               << ",\"is_pilot\":"  << (pk.is_pilot ? "true" : "false")
-               << '}';
+           << ",\"number\":"  << cr.ch->number
+           << ",\"fc_mhz\":"  << cr.ch->fc_mhz;
+        if (cr.ch->pilot_mhz == 0.0f) {
+            // FM: continuous metrics
+            ss << ",\"snr_db\":"  << cr.fm.snr_db
+               << ",\"flatness\":" << cr.fm.flatness;
+        } else {
+            // TV: pilot peak detection
+            ss << ",\"pilot_mhz\":" << cr.ch->pilot_mhz
+               << ",\"peaks\":[";
+            for (int pi = 0; pi < (int)cr.peaks.size(); pi++) {
+                const auto& pk = cr.peaks[pi];
+                if (pi > 0) ss << ',';
+                ss << "{\"freq_mhz\":" << pk.freq_mhz
+                   << ",\"power_db\":" << pk.power_db
+                   << ",\"is_pilot\":"  << (pk.is_pilot ? "true" : "false")
+                   << '}';
+            }
+            ss << ']';
         }
-        ss << "]}";
+        ss << '}';
     }
     ss << "]}\n\n";
     return ss.str();
@@ -268,17 +280,22 @@ static void sse_close_all()
 // Feeds through process_step() so all DSP (Blackman window, /2048, peak-max)
 // is exercised identically to hardware.
 
-struct MockStation { float freq_mhz; float amplitude; };
+struct MockStation {
+    float freq_mhz;
+    float amplitude;
+    float bw_mhz;   // 0 = CW tone; > 0 = wideband (one tone per FFT bin across ±bw_mhz/2)
+};
 
 static const MockStation MOCK_STATIONS[] = {
-    {  89.1f,   300.0f },  // FM weak         (ch 89.1 MHz)
-    {  95.9f,   150.0f },  // FM medium        (ch 95.9 MHz)
-    {  98.7f,   800.0f },  // FM strong        (ch 98.7 MHz, primary test peak)
-    { 103.5f,   100.0f },  // FM weak          (ch 103.5 MHz)
-    { 198.31f,  500.0f },  // VHF ch11 ATSC pilot (lower 198 + 0.31)
-    { 210.31f,  400.0f },  // VHF ch13 ATSC pilot (lower 210 + 0.31)
-    { 530.31f,  600.0f },  // UHF ch24 ATSC pilot (lower 530 + 0.31, center 533)
-    { 614.31f,  450.0f },  // UHF ch38 ATSC pilot (lower 614 + 0.31, center 617)
+    {  89.1f,   300.0f, 0.0f },  // FM weak CW      (ch 89.1 MHz)
+    {  95.9f,   150.0f, 0.0f },  // FM medium CW    (ch 95.9 MHz)
+    {  98.7f,   800.0f, 0.0f },  // FM strong CW    (ch 98.7 MHz, primary test peak)
+    { 103.5f,   100.0f, 0.0f },  // FM weak CW      (ch 103.5 MHz)
+    { 107.1f,   600.0f, 0.2f },  // FM wideband     (ch 107.1 MHz, flatness ≈ 1.0)
+    { 198.31f,  500.0f, 0.0f },  // VHF ch11 ATSC pilot (lower 198 + 0.31)
+    { 210.31f,  400.0f, 0.0f },  // VHF ch13 ATSC pilot (lower 210 + 0.31)
+    { 530.31f,  600.0f, 0.0f },  // UHF ch24 ATSC pilot (lower 530 + 0.31, center 533)
+    { 614.31f,  450.0f, 0.0f },  // UHF ch38 ATSC pilot (lower 614 + 0.31, center 617)
 };
 
 static std::vector<std::complex<float>> mock_iq(float fc_mhz)
@@ -297,18 +314,46 @@ static std::vector<std::complex<float>> mock_iq(float fc_mhz)
                    r * sinf(2.0f * (float)M_PI * u2) };
     }
 
-    // Complex tone for each station within ±4 MHz of fc
+    // Complex signal for each station within ±4 MHz of fc
+    const float pi2 = 2.0f * (float)M_PI;
     for (const auto& s : MOCK_STATIONS) {
-        float offset_hz = (s.freq_mhz - fc_mhz) * 1.0e6f;
-        if (fabsf(offset_hz) > 4.0e6f) continue;
-        float phase     = 0.0f;
-        float phase_inc = 2.0f * (float)M_PI * offset_hz / fs;
-        for (int n = 0; n < N; n++) {
-            buf[n] = { buf[n].real() + s.amplitude * cosf(phase),
-                       buf[n].imag() + s.amplitude * sinf(phase) };
-            phase += phase_inc;
-            if (phase >  (float)M_PI) phase -= 2.0f * (float)M_PI;
-            if (phase < -(float)M_PI) phase += 2.0f * (float)M_PI;
+        float center_offset_hz = (s.freq_mhz - fc_mhz) * 1.0e6f;
+        if (fabsf(center_offset_hz) > 4.0e6f) continue;
+
+        if (s.bw_mhz <= 0.0f) {
+            // CW: single tone at centre frequency
+            float phase     = 0.0f;
+            float phase_inc = pi2 * center_offset_hz / fs;
+            for (int n = 0; n < N; n++) {
+                buf[n] = { buf[n].real() + s.amplitude * cosf(phase),
+                           buf[n].imag() + s.amplitude * sinf(phase) };
+                phase += phase_inc;
+                if (phase >  (float)M_PI) phase -= pi2;
+                if (phase < -(float)M_PI) phase += pi2;
+            }
+        } else {
+            // Wideband: one sinusoid per FFT bin across ±bw_mhz/2.
+            // Each tone lands in exactly one FFT bin (tones are at exact bin frequencies).
+            // Quadratic phase b²/num_bins spreads phases across [0, 2π] so the tones
+            // don't add coherently in the time domain, keeping peak amplitude bounded.
+            // Result: ~205 bins each at the same power → flatness ≈ 1.0.
+            const float bin_hz    = fs / N_FFT;
+            const int   half_bins = (int)(s.bw_mhz * 0.5e6f / bin_hz);
+            const int   num_bins  = 2 * half_bins + 1;
+            const float tone_amp  = s.amplitude / sqrtf((float)num_bins);
+            for (int b = -half_bins; b <= half_bins; b++) {
+                float offset_hz = center_offset_hz + b * bin_hz;
+                if (fabsf(offset_hz) > 4.0e6f) continue;
+                float phase     = pi2 * (float)(b * b) / (float)num_bins;
+                float phase_inc = pi2 * offset_hz / fs;
+                for (int n = 0; n < N; n++) {
+                    buf[n] = { buf[n].real() + tone_amp * cosf(phase),
+                               buf[n].imag() + tone_amp * sinf(phase) };
+                    phase += phase_inc;
+                    if (phase >  (float)M_PI) phase -= pi2;
+                    if (phase < -(float)M_PI) phase += pi2;
+                }
+            }
         }
     }
 
@@ -498,15 +543,27 @@ static void sweep_fn()
             } else {
                 step_channels = steps[i].channels;
             }
+
+            // Per-step noise floor — used as reference for FM SNR calculation.
+            // Computed once outside the channel loop (O(n) nth_element).
+            const float step_noise_db = estimate_step_noise_floor(cur_raw_ema.data(), N_FFT);
+
             for (const Channel* ch : step_channels) {
                 float lo_mhz = ch->fc_mhz - ch->bw_mhz * 0.5f;
                 float hi_mhz = ch->fc_mhz + ch->bw_mhz * 0.5f;
-                // FM: pilot_mhz=0 in table — use channel centre as detection target
-                float pilot = (ch->pilot_mhz > 0.0f) ? ch->pilot_mhz : ch->fc_mhz;
-                auto peaks = find_channel_peaks(cur_raw_ema.data(), N_FFT, fc_mhz,
-                                                lo_mhz, hi_mhz,
-                                                pilot, ch->tol_mhz, NUM_CHANNEL_PEAKS);
-                ch_results.push_back({ch, std::move(peaks)});
+                if (ch->pilot_mhz == 0.0f) {
+                    // FM: compute continuous metrics (SNR + spectral flatness)
+                    FmChannelMetrics fm = compute_fm_metrics(
+                        cur_raw_ema.data(), N_FFT, fc_mhz, lo_mhz, hi_mhz, step_noise_db);
+                    if (fm.snr_db >= FM_MIN_REPORT_SNR)
+                        ch_results.push_back({ch, {}, fm});
+                } else {
+                    // TV: ATSC pilot peak detection (unchanged)
+                    auto peaks = find_channel_peaks(cur_raw_ema.data(), N_FFT, fc_mhz,
+                                                    lo_mhz, hi_mhz,
+                                                    ch->pilot_mhz, ch->tol_mhz, NUM_CHANNEL_PEAKS);
+                    ch_results.push_back({ch, std::move(peaks), {}});
+                }
             }
 
             // ── Frequency window for this slice ───────────────────────────
@@ -526,8 +583,20 @@ static void sweep_fn()
             sl.fc_mhz         = fc_mhz;
             sl.freq_start_mhz = freq_start;
             sl.freq_stop_mhz  = freq_stop;
-            sl.power_db       = power;
-            sl.smooth_db      = cur_ema;
+
+            // FM focus: send full-resolution EMA (N_FFT=8192 bins, 977 Hz/bin)
+            // instead of the decimated 1024-bin focus output.
+            // cur_raw_ema is already up-to-date (computed above).
+            // 205 bins fall within the 200 kHz FM channel vs only 25 at 7.8 kHz/bin.
+            const Channel* focused_ch = is_focus ? find_channel(fc_mhz) : nullptr;
+            bool is_fm_focus = focused_ch && (focused_ch->pilot_mhz == 0.0f);
+            if (is_fm_focus) {
+                sl.power_db  = std::vector<float>(cur_raw_ema.begin(), cur_raw_ema.end());
+                sl.smooth_db = sl.power_db;
+            } else {
+                sl.power_db  = power;
+                sl.smooth_db = cur_ema;
+            }
             sl.channel_results = std::move(ch_results);
             sl.valid          = true;
 

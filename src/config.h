@@ -20,5 +20,9 @@
 #define PEAK_MIN_DBF        -75.0f  // minimum dBFS to flag a peak is_pilot=true
                                     // mock noise floor ≈ -87 dBFS; real towers well above -75
 
+// FM channel metrics
+#define FM_MIN_REPORT_SNR   3.0f    // suppress FM slots below this SNR (dB) from SSE output
+                                    // avoids emitting ~100 empty-slot entries per step
+
 // Server
 #define HTTP_PORT   3020

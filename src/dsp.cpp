@@ -202,6 +202,64 @@ const float* get_raw_db()
     return s_raw_db;
 }
 
+// ── FM channel metrics ────────────────────────────────────────────────────────
+
+float estimate_step_noise_floor(const float* raw_db, int n_fft)
+{
+    // Convert all bins to linear power, find 25th percentile via nth_element O(n).
+    // In a dense FM market <20% of bins are occupied so the 25th percentile always
+    // lands on noise-only bins regardless of how many stations are active.
+    std::vector<float> lin(n_fft);
+    for (int k = 0; k < n_fft; k++)
+        lin[k] = std::pow(10.0f, raw_db[k] / 10.0f);
+
+    int p25 = n_fft / 4;
+    std::nth_element(lin.begin(), lin.begin() + p25, lin.end());
+    return (lin[p25] > 0.0f) ? 10.0f * std::log10f(lin[p25]) : -120.0f;
+}
+
+FmChannelMetrics compute_fm_metrics(
+    const float* raw_db,
+    int          n_fft,
+    float        step_fc_mhz,
+    float        ch_lo_mhz,
+    float        ch_hi_mhz,
+    float        noise_db)
+{
+    const float bin_mhz = (float)SAMPLE_RATE_HZ / 1e6f / n_fft;
+    auto freq_to_idx = [&](float f_mhz) -> int {
+        int idx = n_fft / 2 + (int)roundf((f_mhz - step_fc_mhz) / bin_mhz);
+        return std::max(0, std::min(n_fft - 1, idx));
+    };
+
+    int lo = freq_to_idx(ch_lo_mhz);
+    int hi = freq_to_idx(ch_hi_mhz);
+    int n  = hi - lo;
+    if (n <= 0) return {0.0f, 0.0f};
+
+    // Accumulate arithmetic sum and log sum (for geometric mean) in linear domain.
+    // lin_floor prevents log(0) on silent bins.
+    const float lin_floor = 1e-12f;
+    float sum_lin    = 0.0f;
+    float sum_loglin = 0.0f;
+    for (int k = lo; k < hi; k++) {
+        float p   = std::pow(10.0f, raw_db[k] / 10.0f);
+        sum_lin    += p;
+        sum_loglin += std::logf(std::max(p, lin_floor));
+    }
+
+    float arith_mean = sum_lin / n;
+    float geom_mean  = std::expf(sum_loglin / n);
+
+    float noise_lin = std::pow(10.0f, noise_db / 10.0f);
+    float snr_db    = (arith_mean > noise_lin && noise_lin > 0.0f)
+                    ? 10.0f * std::log10f(arith_mean / noise_lin)
+                    : 0.0f;
+    float flatness  = (arith_mean > 0.0f) ? geom_mean / arith_mean : 0.0f;
+
+    return {snr_db, flatness};
+}
+
 // Find the top num_peaks local-maximum peaks within [ch_lo_mhz, ch_hi_mhz].
 // Operates on the full-resolution N_FFT dBFS array from the last DSP step.
 // Peaks are sorted by power descending. pilot_mhz=0.0 skips the pilot check.
