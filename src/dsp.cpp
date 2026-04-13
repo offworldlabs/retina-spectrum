@@ -215,7 +215,7 @@ float estimate_step_noise_floor(const float* raw_db, int n_fft)
 
     int p25 = n_fft / 4;
     std::nth_element(lin.begin(), lin.begin() + p25, lin.end());
-    return (lin[p25] > 0.0f) ? 10.0f * std::log10f(lin[p25]) : -120.0f;
+    return (lin[p25] > 0.0f) ? 10.0f * std::log10(lin[p25]) : -120.0f;
 }
 
 FmChannelMetrics compute_fm_metrics(
@@ -245,15 +245,15 @@ FmChannelMetrics compute_fm_metrics(
     for (int k = lo; k < hi; k++) {
         float p   = std::pow(10.0f, raw_db[k] / 10.0f);
         sum_lin    += p;
-        sum_loglin += std::logf(std::max(p, lin_floor));
+        sum_loglin += std::log(std::max(p, lin_floor));
     }
 
     float arith_mean = sum_lin / n;
-    float geom_mean  = std::expf(sum_loglin / n);
+    float geom_mean  = std::exp(sum_loglin / n);
 
     float noise_lin = std::pow(10.0f, noise_db / 10.0f);
     float snr_db    = (arith_mean > noise_lin && noise_lin > 0.0f)
-                    ? 10.0f * std::log10f(arith_mean / noise_lin)
+                    ? 10.0f * std::log10(arith_mean / noise_lin)
                     : 0.0f;
     float flatness  = (arith_mean > 0.0f) ? geom_mean / arith_mean : 0.0f;
 
