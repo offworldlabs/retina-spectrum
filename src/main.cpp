@@ -233,12 +233,9 @@ static std::string slice_to_sse(int step, const Slice& sl, int pct, bool full_bi
            << ",\"fc_mhz\":"  << cr.ch->fc_mhz;
         if (cr.ch->pilot_mhz == 0.0f) {
             // FM: metrics + pre-computed score
-            ss << ",\"snr_db\":"             << cr.fm.snr_db
-               << ",\"obw_fraction\":"       << cr.fm.obw_fraction
-               << ",\"sfm\":"                << cr.fm.sfm
-               << ",\"centre_power_frac\":"  << cr.fm.centre_power_frac
-               << ",\"crest_factor_db\":"    << cr.fm.crest_factor_db
-               << ",\"score\":"              << cr.fm.score;
+            ss << ",\"snr_db\":"       << cr.fm.snr_db
+               << ",\"obw_fraction\":" << cr.fm.obw_fraction
+               << ",\"score\":"        << cr.fm.score;
         } else {
             // TV: pilot peak detection
             ss << ",\"pilot_mhz\":" << cr.ch->pilot_mhz

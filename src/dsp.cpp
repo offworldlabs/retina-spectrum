@@ -277,25 +277,13 @@ FmChannelMetrics compute_fm_metrics(
     const int   obw_bins     = std::max(0, hi_cut - lo_cut + 1);
     const float obw_fraction = (float)obw_bins / n;
 
-    // 3. SFM (Wiener entropy) + crest factor within OBW only
-    // ε = noise_lin/100 (20 dB below noise floor): noise-consistent floor prevents
-    // log(0) collapse without materially affecting real broadcast signals.
-    // max_lin_obw tracked free alongside sum_lin_obw for crest factor.
-    float sum_lin_obw = 0.0f, sum_loglin_obw = 0.0f, max_lin_obw = 0.0f;
-    const float eps = noise_lin * 0.01f;
-    for (int i = lo_cut; i <= hi_cut; i++) {
-        if (lin[i] > max_lin_obw) max_lin_obw = lin[i];
-        sum_lin_obw    += lin[i];
-        sum_loglin_obw += std::log(std::max(lin[i], eps));
-    }
-    float sfm = 0.0f;
-    float crest_factor_db = 0.0f;
-    if (obw_bins >= 3) {
-        const float geo   = std::exp(sum_loglin_obw / obw_bins);
-        const float arith = sum_lin_obw / obw_bins;
-        sfm = (arith > 0.0f) ? geo / arith : 0.0f;
-        crest_factor_db = (arith > 0.0f) ? 10.0f * std::log10(max_lin_obw / arith) : 0.0f;
-    }
+    // 3. OBW power sum for SNR
+    float sum_lin_obw = 0.0f;
+    for (int i = lo_cut; i <= hi_cut; i++)
+        sum_lin_obw += lin[i];
+
+    // SFM, crest factor, CPF — commented out, delegated to towers API
+    // const float sfm = ..., crest_factor_db = ..., centre_power_frac = ...;
 
     // 4. SNR — mean power within OBW vs step-wide noise floor
     // Using OBW bins only avoids diluting signal power with silent channel edges.
@@ -304,57 +292,18 @@ FmChannelMetrics compute_fm_metrics(
                           ? 10.0f * std::log10(arith_obw / noise_lin)
                           : 0.0f;
 
-    // 5. Centre power fraction — fraction of OBW power in the middle third.
-    // Splits OBW into three equal thirds; sums the inner third vs total OBW power.
-    // Real FM: ~0.33–0.50 (uniform or carrier-heavy centre).
-    // Trough (null between two adjacent stations): ~0.02–0.10 → rejected by gate.
-    // Slope (one-sided rolloff from adjacent station): ~0.10–0.25 → rejected by gate.
-    float centre_power_frac = 0.0f;
-    if (obw_bins >= 3) {
-        const int third    = obw_bins / 3;
-        const int inner_lo = lo_cut + third;
-        const int inner_hi = hi_cut - third;
-        float centre_power = 0.0f;
-        for (int i = inner_lo; i <= inner_hi; i++)
-            centre_power += lin[i];
-        centre_power_frac = (sum_lin_obw > 0.0f) ? centre_power / sum_lin_obw : 0.0f;
-    }
-
-    // 6. OBW asymmetry — centroid offset from channel centre, normalised to [0,1] (diagnostic).
-    const float obw_centre    = (obw_bins > 0) ? (lo_cut + hi_cut) / 2.0f : (n / 2.0f);
-    const float obw_asymmetry = (n > 0)
-                               ? std::fabs(obw_centre - (n / 2.0f)) / (n / 2.0f)
-                               : 0.0f;
-
-    return {snr_db, obw_fraction, sfm, centre_power_frac, crest_factor_db, obw_asymmetry, 0.0f};
+    return {snr_db, obw_fraction, 0.0f};
 }
 
 float fm_score(const FmChannelMetrics& m)
 {
-    // Base gates — SNR, OBW, CPF applied to all algorithms
-    // SFM retained in algos that explicitly use it (SNR_OBW_SFM)
-    if (m.snr_db            < FM_SNR_GATE_DB       ||
-        m.obw_fraction      < FM_MOB_GATE_FRAC     ||
-        m.centre_power_frac < FM_CENTRE_POWER_GATE)
+    // Gate: SNR + OBW. Shape classification delegated to towers API.
+    if (m.snr_db       < FM_SNR_GATE_DB  ||
+        m.obw_fraction < FM_MOB_GATE_FRAC)
         return 0.0f;
 
-    const float snr_norm = std::max(0.0f, std::min(1.0f,
+    return std::max(0.0f, std::min(1.0f,
         (m.snr_db - FM_SNR_NORM_MIN) / (FM_SNR_NORM_MAX - FM_SNR_NORM_MIN)));
-#if FM_SCORE_ALGO == FM_SCORE_ALGO_GATE
-    return snr_norm;
-#elif FM_SCORE_ALGO == FM_SCORE_ALGO_SNR_OBW
-    return snr_norm * m.obw_fraction;
-#elif FM_SCORE_ALGO == FM_SCORE_ALGO_SNR_OBW_SFM
-    return snr_norm * m.obw_fraction * m.sfm;
-#elif FM_SCORE_ALGO == FM_SCORE_ALGO_SNR_OBW_CPF
-    if (m.centre_power_frac < FM_CENTRE_POWER_GATE) return 0.0f;
-    return snr_norm * m.obw_fraction * m.centre_power_frac;
-#elif FM_SCORE_ALGO == FM_SCORE_ALGO_GATE_CPF
-    if (m.centre_power_frac < FM_CENTRE_POWER_GATE) return 0.0f;
-    return snr_norm;
-#else
-    return 0.0f;
-#endif
 }
 
 // Find the top num_peaks local-maximum peaks within [ch_lo_mhz, ch_hi_mhz].

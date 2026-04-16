@@ -42,19 +42,6 @@
   }
   #back-btn:hover { color: #94a3b8; border-color: #334155; }
 
-  #algo-btns { display: flex; gap: 4px; }
-  #algo-btns button {
-    font-family: 'Courier New', monospace;
-    font-size: 0.75rem;
-    background: none;
-    border: 1px solid #1f2937;
-    border-radius: 4px;
-    padding: 3px 8px;
-    cursor: pointer;
-    color: #475569;
-  }
-  #algo-btns button:hover  { color: #94a3b8; border-color: #334155; }
-  #algo-btns button.active { color: #fb923c; border-color: #fb923c; }
 
   /* ── RANK FEATURE ── remove this block to strip ranking */
   #rank-btn {
@@ -125,13 +112,6 @@
   <div id="tabs">
     <button id="tab-vhf_uhf" onclick="switchTab('vhf_uhf')" class="active">VHF/UHF</button>
     <button id="tab-fm"      onclick="switchTab('fm')">FM</button>
-  </div>
-  <div id="algo-btns">
-    <button onclick="setAlgo(0)" class="active" id="algo-0">gate</button>
-    <button onclick="setAlgo(1)"               id="algo-1">snr×obw</button>
-    <button onclick="setAlgo(2)"               id="algo-2">snr×obw×sfm</button>
-    <button onclick="setAlgo(3)"               id="algo-3">snr×obw×cpf</button>
-    <button onclick="setAlgo(4)"               id="algo-4">gate+cpf</button>
   </div>
   <!-- RANK FEATURE: remove this button to strip ranking -->
   <button id="rank-btn" onclick="toggleRank()">rank</button>
@@ -204,31 +184,14 @@ const channelState = new Map();  // fc_mhz key → latest FM channel object, ins
 let   hoveredChannel = null;  // Channel object under the mouse cursor (sweep mode only)
 let   activeTab      = 'vhf_uhf';  // must be before new Chart() — used in afterDraw
 
-// ── Algo selection — client-side rescoring (mirrors fm_score() in dsp.cpp) ───
-// Gate constants match config.h defaults; algo switches at runtime via buttons.
-const GATES = { snr: 15.0, obw: 0.42, sfm: 0.20, cpf: 0.30 };
+// ── Client-side scoring (mirrors fm_score() in dsp.cpp) ──────────────────────
+const SNR_GATE = 15.0, OBW_GATE = 0.42;
 const SNR_NORM_MIN = 5.0, SNR_NORM_MAX = 50.0;
-let activeAlgo = 0;  // 0=GATE 1=SNR×OBW 2=SNR×OBW×SFM 3=SNR×OBW×CPF 4=GATE+CPF
 
 function clientScore(ch) {
-  if ((ch.snr_db ?? 0)            < GATES.snr) return 0;
-  if ((ch.obw_fraction ?? 0)      < GATES.obw) return 0;
-  if ((ch.centre_power_frac ?? 0) < GATES.cpf) return 0;
-  const snr_norm = Math.max(0, Math.min(1, ((ch.snr_db - SNR_NORM_MIN) / (SNR_NORM_MAX - SNR_NORM_MIN))));
-  if (activeAlgo === 1) return snr_norm * (ch.obw_fraction ?? 0);
-  if (activeAlgo === 2) { if ((ch.sfm ?? 0) < GATES.sfm) return 0; return snr_norm * (ch.obw_fraction ?? 0) * (ch.sfm ?? 0); }
-  if (activeAlgo === 3) return snr_norm * (ch.obw_fraction ?? 0) * (ch.centre_power_frac ?? 0);
-  if (activeAlgo === 4) {
-    return snr_norm;
-  }
-  return snr_norm;  // algo 0: GATE
-}
-
-function setAlgo(n) {
-  activeAlgo = n;
-  for (let i = 0; i <= 4; i++)
-    document.getElementById(`algo-${i}`).classList.toggle('active', i === n);
-  computeRanking(true);
+  if ((ch.snr_db ?? 0)       < SNR_GATE) return 0;
+  if ((ch.obw_fraction ?? 0) < OBW_GATE) return 0;
+  return Math.max(0, Math.min(1, ((ch.snr_db - SNR_NORM_MIN) / (SNR_NORM_MAX - SNR_NORM_MIN))));
 }
 
 // ── RANK FEATURE ── remove this block + all rankMode/topRankedMap references to strip
@@ -496,8 +459,6 @@ function renderChannelList() {
           `<span class="ch-label">${ch.fc.toFixed(1)} MHz</span>` +
           `<span class="ch-metric">SNR ${data.snr_db.toFixed(1)} dB</span>` +
           `<span class="ch-metric">OBW ${((data.obw_fraction ?? 0) * 100).toFixed(0)}%</span>` +
-          `<span class="ch-metric">SFM ${(data.sfm ?? 0).toFixed(2)}</span>` +
-          `<span class="ch-metric">CPF ${((data.centre_power_frac ?? 0) * 100).toFixed(0)}%</span>` +
           `<span class="ch-metric">score ${clientScore(data).toFixed(2)}</span>` +
           `</div>`;
       } else {
@@ -529,9 +490,6 @@ function renderChannelList() {
       `<span class="ch-label${isTop ? ' ch-top' : ''}">${key} MHz</span>` +
       `<span class="ch-metric">SNR ${ch.snr_db.toFixed(1)} dB</span>` +
       `<span class="ch-metric">OBW ${((ch.obw_fraction ?? 0) * 100).toFixed(0)}%</span>` +
-      `<span class="ch-metric">SFM ${(ch.sfm ?? 0).toFixed(2)}</span>` +
-      `<span class="ch-metric">CPF ${((ch.centre_power_frac ?? 0) * 100).toFixed(0)}%</span>` +
-      `<span class="ch-metric">CF ${(ch.crest_factor_db ?? 0).toFixed(1)} dB</span>` +
       scoreSpan +
       `</div>`;
     // END RANK FEATURE (non-rank version: just label/SNR/OBW/SFM, no rankSpan/scoreSpan/isTop)
