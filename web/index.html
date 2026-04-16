@@ -206,23 +206,19 @@ let   activeTab      = 'vhf_uhf';  // must be before new Chart() — used in aft
 
 // ── Algo selection — client-side rescoring (mirrors fm_score() in dsp.cpp) ───
 // Gate constants match config.h defaults; algo switches at runtime via buttons.
-const GATES = { snr: 15.0, obw: 0.42, sfm: 0.20, cpf: 0.25 };
+const GATES = { snr: 15.0, obw: 0.42, sfm: 0.20, cpf: 0.30 };
 const SNR_NORM_MIN = 5.0, SNR_NORM_MAX = 50.0;
 let activeAlgo = 0;  // 0=GATE 1=SNR×OBW 2=SNR×OBW×SFM 3=SNR×OBW×CPF 4=GATE+CPF
 
 function clientScore(ch) {
-  if ((ch.snr_db ?? 0) < GATES.snr) return 0;
-  if ((ch.obw_fraction ?? 0) < GATES.obw) return 0;
-  if ((ch.sfm ?? 0) < GATES.sfm) return 0;
+  if ((ch.snr_db ?? 0)            < GATES.snr) return 0;
+  if ((ch.obw_fraction ?? 0)      < GATES.obw) return 0;
+  if ((ch.centre_power_frac ?? 0) < GATES.cpf) return 0;
   const snr_norm = Math.max(0, Math.min(1, ((ch.snr_db - SNR_NORM_MIN) / (SNR_NORM_MAX - SNR_NORM_MIN))));
   if (activeAlgo === 1) return snr_norm * (ch.obw_fraction ?? 0);
-  if (activeAlgo === 2) return snr_norm * (ch.obw_fraction ?? 0) * (ch.sfm ?? 0);
-  if (activeAlgo === 3) {
-    if ((ch.centre_power_frac ?? 0) < GATES.cpf) return 0;
-    return snr_norm * (ch.obw_fraction ?? 0) * (ch.centre_power_frac ?? 0);
-  }
+  if (activeAlgo === 2) { if ((ch.sfm ?? 0) < GATES.sfm) return 0; return snr_norm * (ch.obw_fraction ?? 0) * (ch.sfm ?? 0); }
+  if (activeAlgo === 3) return snr_norm * (ch.obw_fraction ?? 0) * (ch.centre_power_frac ?? 0);
   if (activeAlgo === 4) {
-    if ((ch.centre_power_frac ?? 0) < GATES.cpf) return 0;
     return snr_norm;
   }
   return snr_norm;  // algo 0: GATE

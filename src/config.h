@@ -40,12 +40,10 @@
 // If FM_OBW_BETA changes, re-calibrate FM_MOB_GATE_FRAC on hardware.
 #define FM_MOB_GATE_FRAC    0.42f  // minimum OBW fraction to pass bandwidth gate
 #define FM_SNR_GATE_DB      15.0f  // minimum SNR (dB) to pass signal strength gate
-#define FM_SFM_GATE          0.20f // minimum spectral flatness (Wiener entropy) to pass
-                                   // computed over FULL channel width (not OBW-only):
-                                   // edge noise bins pull geo mean down for troughs/slopes
-                                   // real FM (full channel): ~0.3–0.6; trough/slope: ~0.05–0.20
-                                   // lower than OBW-only gate was because full-channel SFM is naturally lower
-#define FM_CENTRE_POWER_GATE 0.25f // minimum fraction of OBW power in middle third of OBW
+#define FM_SFM_GATE          0.35f // minimum spectral flatness (Wiener entropy) to pass
+                                   // rejects CW spikes (SFM≈0) and extreme bimodal cases
+                                   // real FM broadcast: 0.2–0.8 depending on programme content
+#define FM_CENTRE_POWER_GATE 0.30f // minimum fraction of OBW power in middle third of OBW
                                    // real FM: ~0.33 (uniform) to ~0.50+ (carrier-heavy)
                                    // trough (null in centre): 0.02–0.10 → rejected
                                    // slope (edge-heavy): 0.10–0.25 → rejected
@@ -57,11 +55,11 @@
 // ── Scoring algorithm ────────────────────────────────────────────────────────
 // All algorithms share gates: SNR >= FM_SNR_GATE_DB, OBW >= FM_MOB_GATE_FRAC,
 // SFM >= FM_SFM_GATE. Change FM_SCORE_ALGO + rebuild (~10s) to switch scoring.
-#define FM_SCORE_ALGO_GATE        0  // gates: SNR+OBW+SFM          score = snr_norm
-#define FM_SCORE_ALGO_SNR_OBW     1  // gates: SNR+OBW+SFM          score = snr_norm × obw_fraction
-#define FM_SCORE_ALGO_SNR_OBW_SFM 2  // gates: SNR+OBW+SFM          score = snr_norm × obw_fraction × sfm
-#define FM_SCORE_ALGO_SNR_OBW_CPF 3  // gates: SNR+OBW+SFM+CPF      score = snr_norm × obw_fraction × centre_power_frac
-#define FM_SCORE_ALGO_GATE_CPF    4  // gates: SNR+OBW+SFM+CPF      score = snr_norm
+#define FM_SCORE_ALGO_GATE        0  // gates: SNR+OBW+CPF          score = snr_norm
+#define FM_SCORE_ALGO_SNR_OBW     1  // gates: SNR+OBW+CPF          score = snr_norm × obw_fraction
+#define FM_SCORE_ALGO_SNR_OBW_SFM 2  // gates: SNR+OBW+CPF+SFM     score = snr_norm × obw_fraction × sfm
+#define FM_SCORE_ALGO_SNR_OBW_CPF 3  // gates: SNR+OBW+CPF         score = snr_norm × obw_fraction × centre_power_frac
+#define FM_SCORE_ALGO_GATE_CPF    4  // gates: SNR+OBW+CPF         score = snr_norm
 #define FM_SCORE_ALGO  FM_SCORE_ALGO_GATE
 
 // Server
