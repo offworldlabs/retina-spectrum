@@ -20,8 +20,9 @@ static fftwf_complex *s_fft_buf   = nullptr;
 static fftwf_plan     s_plan      = nullptr;
 static float          s_window[N_FFT];
 static float          s_linear[N_FFT];    // per-FFT fftshifted magnitude², heap via static
-static float          s_raw_acc[N_FFT];   // accumulator across N_AVG FFTs (linear power)
-static float          s_raw_db[N_FFT];    // averaged dBFS — exposed via get_raw_db()
+static float          s_raw_acc[N_FFT];        // accumulator across N_AVG FFTs (linear power)
+static float          s_raw_db[N_FFT];         // averaged dBFS — exposed via get_raw_db()
+static float          s_raw_linear_out[N_FFT]; // normalised linear power — exposed via get_raw_linear()
 static bool           s_init      = false;
 
 static void dsp_init()
@@ -200,6 +201,14 @@ std::array<float, N_DISPLAY> freq_axis(float fc_mhz)
 const float* get_raw_db()
 {
     return s_raw_db;
+}
+
+const float* get_raw_linear()
+{
+    const float norm = (float)N_FFT * (float)N_FFT;
+    for (int k = 0; k < N_FFT; k++)
+        s_raw_linear_out[k] = (s_raw_acc[k] / N_AVG) / norm;
+    return s_raw_linear_out;
 }
 
 // ── FM channel metrics ────────────────────────────────────────────────────────

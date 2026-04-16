@@ -36,6 +36,12 @@ struct ChannelPeak {
 // DSP call. Use this with find_channel_peaks().
 const float* get_raw_db();
 
+// Returns pointer to the N_FFT-length linear power array (N_AVG-averaged,
+// normalised) populated by the last call to process_step() or
+// process_step_focus(). Valid until the next DSP call.
+// Invariant: get_raw_linear()[k] == pow(10, get_raw_db()[k] / 10) for non-silent bins.
+const float* get_raw_linear();
+
 // Find the top num_peaks local-maximum peaks within channel [ch_lo_mhz, ch_hi_mhz].
 //   raw_db      — N_FFT array from get_raw_db()
 //   step_fc_mhz — frequency the SDR was tuned to for this step

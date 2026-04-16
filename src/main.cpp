@@ -4,6 +4,7 @@
 #include "channels.h"
 #include "config.h"
 #include "dsp.h"
+#include "ring.h"
 #include "sdr.h"
 
 #include <httplib.h>
@@ -367,21 +368,12 @@ static std::vector<std::complex<float>> mock_iq(float fc_mhz)
 
 static void sweep_fn()
 {
-    // Sweep EMA — persists across focus excursions so the averaged line doesn't
-    // have to rebuild from scratch every time the user returns from focus mode.
-    std::vector<std::vector<float>> sweep_ema;
-    bool  sweep_ema_valid = false;
-    int   sweep_ema_total = 0;
-
-    // Focus EMA — separate buffer, reset when the focus fc changes.
-    std::vector<std::vector<float>> focus_ema;
-    bool  focus_ema_valid = false;
-    float focus_ema_fc    = -1.0f;
-
-    // Full-resolution (N_FFT) EMA for peak detection — one buffer per sweep step.
-    std::vector<std::vector<float>> sweep_raw_ema;
-    bool  sweep_raw_ema_valid = false;
-    std::vector<float> focus_raw_ema(N_FFT, 0.0f);
+    // Linear-domain ring buffers — one per sweep step, one for focus mode.
+    // Replace all EMA paths: display and metrics share one averaged spectrum.
+    std::vector<SpectrumRing> sweep_rings;
+    SpectrumRing              focus_ring;
+    float                     focus_ring_fc = -1.0f;
+    std::vector<float>        averaged_db;
 
     float last_tuned_mhz = 0.0f;  // track last hardware tune — avoid same-freq rfChanged issue
 
@@ -398,23 +390,14 @@ static void sweep_fn()
 
         int total = (int)steps.size();
 
-        // Reset focus EMA when the focus frequency changes
-        if (is_focus && focus != focus_ema_fc) {
-            focus_ema.assign(1, std::vector<float>(N_DISPLAY_FOCUS, 0.0f));
-            std::fill(focus_raw_ema.begin(), focus_raw_ema.end(), 0.0f);
-            focus_ema_valid = false;
-            focus_ema_fc    = focus;
+        // Reset focus ring when the focus frequency changes
+        if (is_focus && focus != focus_ring_fc) {
+            focus_ring    = SpectrumRing{};
+            focus_ring_fc = focus;
         }
-        // Reset sweep EMA if step count changed (e.g. band config change)
-        if (!is_focus && (int)sweep_ema.size() != total) {
-            sweep_ema.assign(total, std::vector<float>(N_DISPLAY, 0.0f));
-            sweep_ema_valid = false;
-            sweep_ema_total = total;
-        }
-        if (!is_focus && (int)sweep_raw_ema.size() != total) {
-            sweep_raw_ema.assign(total, std::vector<float>(N_FFT, 0.0f));
-            sweep_raw_ema_valid = false;
-        }
+        // Resize sweep rings if step count changed
+        if (!is_focus && (int)sweep_rings.size() != total)
+            sweep_rings.resize(total);
 
         {
             std::lock_guard<std::mutex> lk(g_state.mtx);
@@ -514,31 +497,13 @@ static void sweep_fn()
                 }
             }
 
-            // EMA blend — smooth_db tracks weighted history, power_db is raw
-            auto& cur_ema       = is_focus ? focus_ema[0]  : sweep_ema[i];
-            bool& cur_ema_valid = is_focus ? focus_ema_valid : sweep_ema_valid;
-            if (cur_ema_valid) {
-                const float alpha = is_focus ? FOCUS_EMA_ALPHA : EMA_ALPHA;
-                for (int d = 0; d < (int)power.size(); d++)
-                    cur_ema[d] = alpha * power[d] + (1.0f - alpha) * cur_ema[d];
-            } else {
-                cur_ema = power;  // first pass: seed with raw
-            }
+            // Push linear spectrum into ring; get arithmetic-mean dB spectrum
+            auto& ring = is_focus ? focus_ring : sweep_rings[i];
+            ring.push(get_raw_linear(), N_FFT);
+            ring.get_db(averaged_db);
 
-            // ── Per-channel peak detection on EMA-smoothed FFT bins ──────
-            const float* raw_db = get_raw_db();
-            auto& cur_raw_ema = is_focus ? focus_raw_ema : sweep_raw_ema[i];
-            bool  raw_ema_seeded = is_focus ? focus_ema_valid : sweep_raw_ema_valid;
-            if (raw_ema_seeded) {
-                const float alpha = is_focus ? FOCUS_EMA_ALPHA : EMA_ALPHA;
-                for (int k = 0; k < N_FFT; k++)
-                    cur_raw_ema[k] = alpha * raw_db[k] + (1.0f - alpha) * cur_raw_ema[k];
-            } else {
-                std::copy(raw_db, raw_db + N_FFT, cur_raw_ema.begin());
-            }
+            // ── Per-channel analysis (gated on ring readiness) ────────────
             std::vector<ChannelResult> ch_results;
-            // In focus mode, analyse the single focused channel; in sweep mode,
-            // analyse all channels associated with this step.
             std::vector<const Channel*> step_channels;
             if (is_focus) {
                 const Channel* ch = find_channel(fc_mhz);
@@ -547,35 +512,29 @@ static void sweep_fn()
                 step_channels = steps[i].channels;
             }
 
-            // Per-step noise floor — used as reference for FM SNR calculation.
-            // Computed once outside the channel loop (O(n) nth_element).
-            const float step_noise_db = estimate_step_noise_floor(cur_raw_ema.data(), N_FFT);
-
-            for (const Channel* ch : step_channels) {
-                float lo_mhz = ch->fc_mhz - ch->bw_mhz * 0.5f;
-                float hi_mhz = ch->fc_mhz + ch->bw_mhz * 0.5f;
-                if (ch->pilot_mhz == 0.0f) {
-                    // FM: compute continuous metrics (SNR + occupancy)
-                    FmChannelMetrics fm = compute_fm_metrics(
-                        cur_raw_ema.data(), N_FFT, fc_mhz, lo_mhz, hi_mhz, step_noise_db);
-                    fm.score = fm_score(fm);
-                    if (fm.snr_db >= FM_MIN_REPORT_SNR)
-                        ch_results.push_back({ch, {}, fm});
-                } else {
-                    // TV: ATSC pilot peak detection (unchanged)
-                    auto peaks = find_channel_peaks(cur_raw_ema.data(), N_FFT, fc_mhz,
-                                                    lo_mhz, hi_mhz,
-                                                    ch->pilot_mhz, ch->tol_mhz, NUM_CHANNEL_PEAKS);
-                    ch_results.push_back({ch, std::move(peaks), {}});
+            if (ring.ready()) {
+                const float step_noise_db = estimate_step_noise_floor(averaged_db.data(), N_FFT);
+                for (const Channel* ch : step_channels) {
+                    float lo_mhz = ch->fc_mhz - ch->bw_mhz * 0.5f;
+                    float hi_mhz = ch->fc_mhz + ch->bw_mhz * 0.5f;
+                    if (ch->pilot_mhz == 0.0f) {
+                        FmChannelMetrics fm = compute_fm_metrics(
+                            averaged_db.data(), N_FFT, fc_mhz, lo_mhz, hi_mhz, step_noise_db);
+                        fm.score = fm_score(fm);
+                        if (fm.snr_db >= FM_MIN_REPORT_SNR)
+                            ch_results.push_back({ch, {}, fm});
+                    } else {
+                        auto peaks = find_channel_peaks(averaged_db.data(), N_FFT, fc_mhz,
+                                                        lo_mhz, hi_mhz,
+                                                        ch->pilot_mhz, ch->tol_mhz, NUM_CHANNEL_PEAKS);
+                        ch_results.push_back({ch, std::move(peaks), {}});
+                    }
                 }
             }
 
             // ── Frequency window for this slice ───────────────────────────
             float freq_start, freq_stop;
             if (is_focus) {
-                // Always use the actual ±4 MHz capture window so the frontend
-                // maps bins to frequencies correctly (binWidth = 8/N_DISPLAY_FOCUS).
-                // The x-axis is set separately by setAxisFocusChannel() on the client.
                 freq_start = fc_mhz - 4.0f;
                 freq_stop  = fc_mhz + 4.0f;
             } else {
@@ -583,23 +542,32 @@ static void sweep_fn()
                 freq_stop  = fc_mhz + TRIM_HALF_MHZ;
             }
 
+            // ── Build display from averaged_db ────────────────────────────
+            // Decimate N_FFT ring-averaged bins → display resolution (max within GROUP).
+            // FM focus: send full N_FFT resolution (977 Hz/bin, 205 bins per channel).
+            const Channel* focused_ch = is_focus ? find_channel(fc_mhz) : nullptr;
+            bool is_fm_focus = focused_ch && (focused_ch->pilot_mhz == 0.0f);
+
             Slice sl;
             sl.fc_mhz         = fc_mhz;
             sl.freq_start_mhz = freq_start;
             sl.freq_stop_mhz  = freq_stop;
 
-            // FM focus: send full-resolution EMA (N_FFT=8192 bins, 977 Hz/bin)
-            // instead of the decimated 1024-bin focus output.
-            // cur_raw_ema is already up-to-date (computed above).
-            // 205 bins fall within the 200 kHz FM channel vs only 25 at 7.8 kHz/bin.
-            const Channel* focused_ch = is_focus ? find_channel(fc_mhz) : nullptr;
-            bool is_fm_focus = focused_ch && (focused_ch->pilot_mhz == 0.0f);
             if (is_fm_focus) {
-                sl.power_db  = std::vector<float>(cur_raw_ema.begin(), cur_raw_ema.end());
-                sl.smooth_db = sl.power_db;
+                sl.power_db  = averaged_db;
+                sl.smooth_db = averaged_db;
             } else {
-                sl.power_db  = power;
-                sl.smooth_db = cur_ema;
+                const int disp = is_focus ? N_DISPLAY_FOCUS : N_DISPLAY;
+                const int grp  = N_FFT / disp;
+                std::vector<float> disp_db(disp);
+                for (int d = 0; d < disp; d++) {
+                    float peak = -120.0f;
+                    for (int g = 0; g < grp; g++)
+                        peak = std::max(peak, averaged_db[d * grp + g]);
+                    disp_db[d] = peak;
+                }
+                sl.power_db  = disp_db;
+                sl.smooth_db = disp_db;
             }
             sl.channel_results = std::move(ch_results);
             sl.valid          = true;
@@ -622,11 +590,6 @@ static void sweep_fn()
                 }
             }
         }
-
-        // Mark EMA as having history after the first complete pass
-        sweep_ema_valid     = true;
-        sweep_raw_ema_valid = true;
-        focus_ema_valid     = true;
 
         {
             std::lock_guard<std::mutex> lk(g_state.mtx);

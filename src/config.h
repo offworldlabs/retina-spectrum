@@ -5,8 +5,10 @@
 #define N_DISPLAY       64      // sweep mode display bins (125 kHz/bin, GROUP=128)
 #define N_DISPLAY_FOCUS 1024    // focus mode display bins (7.8 kHz/bin, GROUP=8)
 #define N_AVG           8       // FFT averages per step — reduces noise variance ~9 dB
-#define EMA_ALPHA       0.15f   // sweep-to-sweep EMA — ~7 sweeps to converge (~4 min at 35s/sweep)
-#define FOCUS_EMA_ALPHA 0.3f    // focus-mode EMA — converges in ~3 captures (~1.5 s at 500 ms pause)
+#define METRICS_AVG_STEPS    20 // ring depth for spectrum averaging — both scan and focus modes
+                                // sweep: 20 passes × 35s ≈ 12 min full ring (5 entries ≈ 3 min)
+                                // focus: 20 × 500ms = 10s full ring  (5 entries = 2.5s)
+#define METRICS_MIN_ENTRIES   5 // min pushes before ring.ready() — gates API export
 
 // SDR
 #define SAMPLE_RATE_HZ      8000000
@@ -37,7 +39,7 @@
 // At β=0.01: frac=0.50 ≈ 100 kHz actual BW ≈ 1500 m range resolution
 // If FM_OBW_BETA changes, re-calibrate FM_MOB_GATE_FRAC on hardware.
 #define FM_MOB_GATE_FRAC    0.42f   // minimum OBW fraction to pass bandwidth gate
-#define FM_SNR_GATE_DB      10.0f   // minimum SNR (dB) to pass signal strength gate
+#define FM_SNR_GATE_DB      15.0f   // minimum SNR (dB) to pass signal strength gate
 
 // ── SNR normalisation (rank ordering within passing set) ─────────────────────
 #define FM_SNR_NORM_MIN      5.0f   // SNR below this → rank score = 0

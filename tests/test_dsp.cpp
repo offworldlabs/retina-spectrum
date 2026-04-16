@@ -457,6 +457,30 @@ TEST_CASE("fm_score GATE: higher SNR → higher score within passing set", "[dsp
 }
 #endif
 
+// ── 13. get_raw_linear consistency ───────────────────────────────────────────
+
+TEST_CASE("get_raw_linear: consistent with get_raw_db for all non-silent bins", "[dsp][linear]")
+{
+    // Process a step with a strong tone so most bins are well above -120 dB floor.
+    auto buf = make_tone_iq(1.0e6f, 1500.0f, 30.0f, 42);
+    process_step(100.0f, buf);
+
+    const float* lin_out = get_raw_linear();
+    const float* db_out  = get_raw_db();
+
+    int checked = 0;
+    for (int k = 0; k < N_FFT; k++) {
+        if (db_out[k] <= -119.0f) continue;  // skip floor bins
+        const float expected = std::pow(10.0f, db_out[k] / 10.0f);
+        INFO("bin " << k << ": get_raw_linear=" << lin_out[k]
+             << "  pow(10, get_raw_db/10)=" << expected);
+        CHECK(lin_out[k] == Catch::Approx(expected).epsilon(1e-4f));
+        ++checked;
+    }
+    // Sanity: at least some bins were above floor
+    CHECK(checked > 10);
+}
+
 // ── 9. Sidelobe suppression — Blackman vs Hanning ────────────────────────────
 
 TEST_CASE("sidelobe suppression: bins ≥4 away from a strong tone are below -50 dBFS", "[dsp][window][sidelobes]")
