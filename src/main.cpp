@@ -231,10 +231,12 @@ static std::string slice_to_sse(int step, const Slice& sl, int pct, bool full_bi
            << ",\"number\":"  << cr.ch->number
            << ",\"fc_mhz\":"  << cr.ch->fc_mhz;
         if (cr.ch->pilot_mhz == 0.0f) {
-            // FM: continuous metrics
-            ss << ",\"snr_db\":"  << cr.fm.snr_db
-               << ",\"obw_fraction\":" << cr.fm.obw_fraction
-               << ",\"sfm\":"         << cr.fm.sfm;
+            // FM: metrics + pre-computed score
+            ss << ",\"snr_db\":"          << cr.fm.snr_db
+               << ",\"obw_fraction\":"    << cr.fm.obw_fraction
+               << ",\"sfm\":"             << cr.fm.sfm
+               << ",\"crest_factor_db\":" << cr.fm.crest_factor_db
+               << ",\"score\":"           << cr.fm.score;
         } else {
             // TV: pilot peak detection
             ss << ",\"pilot_mhz\":" << cr.ch->pilot_mhz
@@ -556,6 +558,7 @@ static void sweep_fn()
                     // FM: compute continuous metrics (SNR + occupancy)
                     FmChannelMetrics fm = compute_fm_metrics(
                         cur_raw_ema.data(), N_FFT, fc_mhz, lo_mhz, hi_mhz, step_noise_db);
+                    fm.score = fm_score(fm);
                     if (fm.snr_db >= FM_MIN_REPORT_SNR)
                         ch_results.push_back({ch, {}, fm});
                 } else {

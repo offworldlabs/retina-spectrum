@@ -184,26 +184,18 @@ let   hoveredChannel = null;  // Channel object under the mouse cursor (sweep mo
 let   activeTab      = 'vhf_uhf';  // must be before new Chart() — used in afterDraw
 
 // ── RANK FEATURE ── remove this block + all rankMode/topRankedMap references to strip
-const RANK_TOP_N   = 7;
 let   rankMode     = false;
 const topRankedMap = new Map();  // fc_mhz.toFixed(1) → rank number (1-based)
-
-// SNR normalisation: clamp snr_db to [0,1] before multiplying dimensionless metrics
-const SNR_NORM_MIN = 5;   // dB — below this: unusable, score → 0
-const SNR_NORM_MAX = 35;  // dB — above this: already excellent, cap at 1
-function fmScore(ch) {
-  const snr_norm = Math.max(0, Math.min(1, (ch.snr_db - SNR_NORM_MIN) / (SNR_NORM_MAX - SNR_NORM_MIN)));
-  return snr_norm * (ch.obw_fraction ?? 0) * (ch.sfm ?? 0);
-}
 
 function computeRanking(andRedraw = true) {
   topRankedMap.clear();
   if (rankMode) {
     const scored = [...channelState.values()]
       .filter(ch => ch.band === 'fm')
-      .map(ch => ({ ch, score: fmScore(ch) }))
+      .map(ch => ({ ch, score: ch.score ?? 0 }))
       .sort((a, b) => b.score - a.score);
-    scored.slice(0, RANK_TOP_N).forEach((s, i) => topRankedMap.set(s.ch.fc_mhz.toFixed(1), i + 1));
+    // All passing stations (score > 0) get a rank; rejected stay out of the map
+    scored.filter(s => s.score > 0).forEach((s, i) => topRankedMap.set(s.ch.fc_mhz.toFixed(1), i + 1));
   }
   renderChannelList();
   if (andRedraw) chart.update('none');
@@ -451,13 +443,13 @@ function renderChannelList() {
     if (ch && ch.band === 'fm') {
       const data = channelState.get(ch.fc.toFixed(1));
       if (data) {
-        const score = fmScore(data);
+        const score = data.score ?? 0;
         el.innerHTML =
           `<div class="ch-row">` +
           `<span class="ch-label">${ch.fc.toFixed(1)} MHz</span>` +
           `<span class="ch-metric">SNR ${data.snr_db.toFixed(1)} dB</span>` +
           `<span class="ch-metric">OBW ${((data.obw_fraction ?? 0) * 100).toFixed(0)}%</span>` +
-          `<span class="ch-metric">SFM ${(data.sfm ?? 0).toFixed(2)}</span>` +
+          `<span class="ch-metric">CF ${(data.crest_factor_db ?? 0).toFixed(1)} dB</span>` +
           `<span class="ch-metric">score ${score.toFixed(2)}</span>` +
           `</div>`;
       } else {
@@ -477,19 +469,19 @@ function renderChannelList() {
   }
   let channels = [...channelState.values()].filter(ch => ch.band === 'fm');
   // RANK FEATURE: sort by score when rank mode active
-  if (rankMode) channels.sort((a, b) => fmScore(b) - fmScore(a));
+  if (rankMode) channels.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
   const rows = channels.map((ch, i) => {
     // RANK FEATURE: highlight top-N rows
     const key    = ch.fc_mhz.toFixed(1);
     const isTop  = topRankedMap.has(key);
     const rankSpan  = rankMode ? `<span class="ch-rank${isTop ? ' ch-top' : ''}">#${i+1}</span>` : '';
-    const scoreSpan = rankMode ? `<span class="ch-metric${isTop ? ' ch-top' : ''}">score ${fmScore(ch).toFixed(2)}</span>` : '';
+    const scoreSpan = rankMode ? `<span class="ch-metric${isTop ? ' ch-top' : ''}">score ${(ch.score ?? 0).toFixed(2)}</span>` : '';
     return `<div class="ch-row${isTop ? ' ch-row-top' : ''}">` +
       rankSpan +
       `<span class="ch-label${isTop ? ' ch-top' : ''}">${key} MHz</span>` +
       `<span class="ch-metric">SNR ${ch.snr_db.toFixed(1)} dB</span>` +
       `<span class="ch-metric">OBW ${((ch.obw_fraction ?? 0) * 100).toFixed(0)}%</span>` +
-      `<span class="ch-metric">SFM ${(ch.sfm ?? 0).toFixed(2)}</span>` +
+      `<span class="ch-metric">CF ${(ch.crest_factor_db ?? 0).toFixed(1)} dB</span>` +
       scoreSpan +
       `</div>`;
     // END RANK FEATURE (non-rank version: just label/SNR/OBW/SFM, no rankSpan/scoreSpan/isTop)

@@ -55,16 +55,18 @@ std::vector<ChannelPeak> find_channel_peaks(
 // ── FM channel metrics ────────────────────────────────────────────────────────
 
 struct FmChannelMetrics {
-    float snr_db;      // mean channel power relative to per-step noise floor (dB)
-    float obw_fraction;// ITU-R SM.443-4 β/2 OBW as fraction of channel bandwidth [0,1]
-    float sfm;         // Wiener entropy within OBW [0,1] — ambiguity function noise-likeness proxy
+    float snr_db;          // mean channel power vs noise floor (dB)
+    float obw_fraction;    // OBW as fraction of channel BW [0,1]  (uses FM_OBW_BETA)
+    float sfm;             // Wiener entropy within OBW [0,1]
+    float crest_factor_db; // 10·log10(max/mean) within OBW; ~3 dB=flat, >15 dB=peaked (diagnostic)
+    float score;           // fm_score() output — pre-computed rank score, not a raw measurement
 };
 
 // 25th percentile of raw_db[0..n_fft-1] converted to linear, O(n) via nth_element,
 // returned in dB. Used as the per-step noise floor reference.
 float estimate_step_noise_floor(const float* raw_db, int n_fft);
 
-// Compute SNR + OBW fraction + SFM for one FM channel slot [ch_lo_mhz, ch_hi_mhz].
+// Compute all FM channel metrics for one channel slot [ch_lo_mhz, ch_hi_mhz].
 //   noise_db — from estimate_step_noise_floor() for this step
 FmChannelMetrics compute_fm_metrics(
     const float* raw_db,
@@ -73,3 +75,7 @@ FmChannelMetrics compute_fm_metrics(
     float        ch_lo_mhz,
     float        ch_hi_mhz,
     float        noise_db);
+
+// Compute illuminator quality score from metrics.
+// Algorithm selected by FM_SCORE_ALGO in config.h — change one line + rebuild to switch.
+float fm_score(const FmChannelMetrics& m);

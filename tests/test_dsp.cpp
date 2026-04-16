@@ -301,10 +301,12 @@ TEST_CASE("FM metrics: uniform channel → obw≈1.0, sfm≈1.0, snr>0", "[dsp][
     for (int k = lo; k <= hi; k++) raw[k] = channel_db;
 
     FmChannelMetrics m = compute_fm_metrics(raw.data(), N_FFT, fc, fc - 0.1f, fc + 0.1f, noise_db);
-    INFO("obw_fraction=" << m.obw_fraction << " sfm=" << m.sfm << " snr_db=" << m.snr_db);
-    CHECK(m.obw_fraction >= 0.95f);
-    CHECK(m.sfm          >= 0.95f);
-    CHECK(m.snr_db       >  0.0f);
+    INFO("obw_fraction=" << m.obw_fraction << " sfm=" << m.sfm << " snr_db=" << m.snr_db
+         << " crest_factor_db=" << m.crest_factor_db);
+    CHECK(m.obw_fraction     >= 0.85f);  // β=0.10 trims ~5% each edge: ~90% of channel
+    CHECK(m.sfm              >= 0.95f);
+    CHECK(m.snr_db           >  0.0f);
+    CHECK(m.crest_factor_db  <  3.0f);   // flat signal: max/mean ≈ 1 → CF ≈ 0 dB
 }
 
 TEST_CASE("FM metrics: CW spike → obw<0.02, sfm=0, snr>10", "[dsp][fm][metrics]")
@@ -316,10 +318,12 @@ TEST_CASE("FM metrics: CW spike → obw<0.02, sfm=0, snr>10", "[dsp][fm][metrics
     raw[N_FFT / 2] = -30.0f;  // 57 dB above noise
 
     FmChannelMetrics m = compute_fm_metrics(raw.data(), N_FFT, fc, fc - 0.1f, fc + 0.1f, noise_db);
-    INFO("obw_fraction=" << m.obw_fraction << " sfm=" << m.sfm << " snr_db=" << m.snr_db);
+    INFO("obw_fraction=" << m.obw_fraction << " sfm=" << m.sfm << " snr_db=" << m.snr_db
+         << " crest_factor_db=" << m.crest_factor_db);
     CHECK(m.obw_fraction <  0.02f);
     CHECK(m.sfm          == Catch::Approx(0.0f).margin(0.05f));
     CHECK(m.snr_db       >  10.0f);
+    CHECK(m.crest_factor_db < 3.0f);  // obw_bins < 3 → CF guard fires, returns 0.0f
 }
 
 TEST_CASE("FM metrics: half-occupied → obw≈0.49, sfm≈1.0", "[dsp][fm][metrics]")
@@ -340,9 +344,12 @@ TEST_CASE("FM metrics: half-occupied → obw≈0.49, sfm≈1.0", "[dsp][fm][metr
     for (int k = lo; k < lo + n / 2; k++) raw[k] = channel_db;
 
     FmChannelMetrics m = compute_fm_metrics(raw.data(), N_FFT, fc, fc - 0.1f, fc + 0.1f, noise_db);
-    INFO("obw_fraction=" << m.obw_fraction << " sfm=" << m.sfm);
-    CHECK(m.obw_fraction == Catch::Approx(0.49f).margin(0.04f));
+    INFO("obw_fraction=" << m.obw_fraction << " sfm=" << m.sfm
+         << " crest_factor_db=" << m.crest_factor_db);
+    // β=0.10 trims ~5 bins from each edge of the occupied half → fraction slightly < 0.49
+    CHECK(m.obw_fraction == Catch::Approx(0.46f).margin(0.05f));
     CHECK(m.sfm          == Catch::Approx(1.0f).margin(0.02f));
+    CHECK(m.crest_factor_db < 3.0f);  // uniform signal in OBW: max/mean ≈ 1 → CF ≈ 0 dB
 }
 
 TEST_CASE("FM metrics: empty/noise-only → obw≈0.99, sfm≈1.0, snr≈0", "[dsp][fm][metrics]")
@@ -354,10 +361,12 @@ TEST_CASE("FM metrics: empty/noise-only → obw≈0.99, sfm≈1.0, snr≈0", "[d
     std::vector<float> raw(N_FFT, noise_db);
 
     FmChannelMetrics m = compute_fm_metrics(raw.data(), N_FFT, fc, fc - 0.1f, fc + 0.1f, noise_db);
-    INFO("obw_fraction=" << m.obw_fraction << " sfm=" << m.sfm << " snr_db=" << m.snr_db);
-    CHECK(m.obw_fraction >= 0.95f);
+    INFO("obw_fraction=" << m.obw_fraction << " sfm=" << m.sfm << " snr_db=" << m.snr_db
+         << " crest_factor_db=" << m.crest_factor_db);
+    CHECK(m.obw_fraction >= 0.85f);  // β=0.10 trims ~5% each edge from uniform noise
     CHECK(m.sfm          >= 0.90f);
     CHECK(m.snr_db       == Catch::Approx(0.0f).margin(2.0f));
+    CHECK(m.crest_factor_db < 6.0f);  // uniform noise: max/mean close to 1 → CF ≈ 0 dB
 }
 
 TEST_CASE("FM metrics: two-tone → obw≈1.0, sfm<0.05", "[dsp][fm][metrics]")
@@ -374,9 +383,11 @@ TEST_CASE("FM metrics: two-tone → obw≈1.0, sfm<0.05", "[dsp][fm][metrics]")
     raw[hi - 1] = -40.0f;  // last bin in channel window (n = hi-lo, bins lo..hi-1)
 
     FmChannelMetrics m = compute_fm_metrics(raw.data(), N_FFT, fc, fc - 0.1f, fc + 0.1f, noise_db);
-    INFO("obw_fraction=" << m.obw_fraction << " sfm=" << m.sfm);
-    CHECK(m.obw_fraction >= 0.95f);
+    INFO("obw_fraction=" << m.obw_fraction << " sfm=" << m.sfm
+         << " crest_factor_db=" << m.crest_factor_db);
+    CHECK(m.obw_fraction >= 0.95f);  // edge spikes → OBW = full channel (β consumed by spikes)
     CHECK(m.sfm          <  0.05f);
+    CHECK(m.crest_factor_db > 15.0f);  // two spikes dominate: max >> mean → CF > 15 dB
 }
 
 TEST_CASE("FM metrics: eps floor — single zero bin in OBW does not collapse sfm", "[dsp][fm][metrics]")
@@ -395,10 +406,56 @@ TEST_CASE("FM metrics: eps floor — single zero bin in OBW does not collapse sf
     raw[(lo + hi) / 2] = -120.0f;  // one effectively-zero bin inside OBW
 
     FmChannelMetrics m = compute_fm_metrics(raw.data(), N_FFT, fc, fc - 0.1f, fc + 0.1f, noise_db);
-    INFO("obw_fraction=" << m.obw_fraction << " sfm=" << m.sfm);
-    CHECK(m.obw_fraction >= 0.95f);
-    CHECK(m.sfm          >  0.5f);  // should remain well above 0 — not collapsed
+    INFO("obw_fraction=" << m.obw_fraction << " sfm=" << m.sfm
+         << " crest_factor_db=" << m.crest_factor_db);
+    CHECK(m.obw_fraction >= 0.85f);  // β=0.10 trims ~5% each edge
+    CHECK(m.sfm          >  0.5f);   // should remain well above 0 — not collapsed
+    CHECK(m.crest_factor_db < 10.0f); // mostly uniform: max/mean near 1 → CF ≈ 0 dB
 }
+
+// ── 12. fm_score ─────────────────────────────────────────────────────────────
+
+TEST_CASE("fm_score: noise-only channel → score = 0 (all algorithms)", "[dsp][fm][score]")
+{
+    // snr_db ≈ 0 → snr_norm = 0 → score = 0 for all continuous algos;
+    // also below SNR gate threshold for GATE algo.
+    FmChannelMetrics m{};
+    m.snr_db = 0.0f; m.obw_fraction = 0.99f; m.sfm = 1.0f;
+    CHECK(fm_score(m) == Catch::Approx(0.0f).margin(0.001f));
+}
+
+TEST_CASE("fm_score: score is in [0, 1] for strong wideband signal", "[dsp][fm][score]")
+{
+    FmChannelMetrics m{};
+    m.snr_db = 30.0f; m.obw_fraction = 0.85f; m.sfm = 0.80f;
+    float s = fm_score(m);
+    CHECK(s >= 0.0f);
+    CHECK(s <= 1.0f);
+}
+
+#if FM_SCORE_ALGO == FM_SCORE_ALGO_GATE
+TEST_CASE("fm_score GATE: below SNR threshold → 0", "[dsp][fm][score]")
+{
+    FmChannelMetrics m{};
+    m.snr_db = FM_SNR_GATE_DB - 1.0f; m.obw_fraction = 0.9f;
+    CHECK(fm_score(m) == 0.0f);
+}
+
+TEST_CASE("fm_score GATE: below OBW threshold → 0", "[dsp][fm][score]")
+{
+    FmChannelMetrics m{};
+    m.snr_db = FM_SNR_GATE_DB + 5.0f; m.obw_fraction = FM_MOB_GATE_FRAC - 0.01f;
+    CHECK(fm_score(m) == 0.0f);
+}
+
+TEST_CASE("fm_score GATE: higher SNR → higher score within passing set", "[dsp][fm][score]")
+{
+    FmChannelMetrics lo_snr{}, hi_snr{};
+    lo_snr.snr_db = FM_SNR_GATE_DB + 5.0f;  lo_snr.obw_fraction = 0.80f;
+    hi_snr.snr_db = FM_SNR_GATE_DB + 20.0f; hi_snr.obw_fraction = 0.80f;
+    CHECK(fm_score(hi_snr) > fm_score(lo_snr));
+}
+#endif
 
 // ── 9. Sidelobe suppression — Blackman vs Hanning ────────────────────────────
 

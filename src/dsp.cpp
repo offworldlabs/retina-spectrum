@@ -235,7 +235,7 @@ FmChannelMetrics compute_fm_metrics(
     int lo = freq_to_idx(ch_lo_mhz);
     int hi = freq_to_idx(ch_hi_mhz);
     int n  = hi - lo;
-    if (n <= 0) return {0.0f, 0.0f};
+    if (n <= 0) return {};
 
     // 0. noise_lin first — used for both SNR and SFM ε floor
     const float noise_lin = std::pow(10.0f, noise_db / 10.0f);
@@ -248,10 +248,11 @@ FmChannelMetrics compute_fm_metrics(
         total += lin[i];
     }
 
-    // 2. OBW — ITU-R SM.443-4 β/2 method (99% power containment)
-    // Integrate from each edge until 0.5% of total power is consumed.
-    // Leakage-robust: sidelobe power << β_half for any realistic signal.
-    const float beta_half = 0.005f * total;
+    // 2. OBW — ITU-R SM.443-4 β/2 method (FM_OBW_BETA power containment)
+    // Integrate from each edge until (FM_OBW_BETA/2) of total power is consumed.
+    // At β=0.10 (90%): each edge must accumulate 5% of total power before cutting,
+    // making it much harder for a single adjacent-channel leakage bin to inflate OBW.
+    const float beta_half = (FM_OBW_BETA / 2.0f) * total;
     float cum = 0.0f;
     int lo_cut = 0;
     for (int i = 0; i < n; i++) {
@@ -267,20 +268,24 @@ FmChannelMetrics compute_fm_metrics(
     const int   obw_bins     = std::max(0, hi_cut - lo_cut + 1);
     const float obw_fraction = (float)obw_bins / n;
 
-    // 3. SFM (Wiener entropy) within OBW only
+    // 3. SFM (Wiener entropy) + crest factor within OBW only
     // ε = noise_lin/100 (20 dB below noise floor): noise-consistent floor prevents
     // log(0) collapse without materially affecting real broadcast signals.
-    float sum_lin_obw = 0.0f, sum_loglin_obw = 0.0f;
+    // max_lin_obw tracked free alongside sum_lin_obw for crest factor.
+    float sum_lin_obw = 0.0f, sum_loglin_obw = 0.0f, max_lin_obw = 0.0f;
     const float eps = noise_lin * 0.01f;
     for (int i = lo_cut; i <= hi_cut; i++) {
+        if (lin[i] > max_lin_obw) max_lin_obw = lin[i];
         sum_lin_obw    += lin[i];
         sum_loglin_obw += std::log(std::max(lin[i], eps));
     }
     float sfm = 0.0f;
+    float crest_factor_db = 0.0f;
     if (obw_bins >= 3) {
         const float geo   = std::exp(sum_loglin_obw / obw_bins);
         const float arith = sum_lin_obw / obw_bins;
         sfm = (arith > 0.0f) ? geo / arith : 0.0f;
+        crest_factor_db = (arith > 0.0f) ? 10.0f * std::log10(max_lin_obw / arith) : 0.0f;
     }
 
     // 4. SNR — mean channel power vs noise floor
@@ -289,7 +294,24 @@ FmChannelMetrics compute_fm_metrics(
                           ? 10.0f * std::log10(arith_all / noise_lin)
                           : 0.0f;
 
-    return {snr_db, obw_fraction, sfm};
+    return {snr_db, obw_fraction, sfm, crest_factor_db, 0.0f};
+}
+
+float fm_score(const FmChannelMetrics& m)
+{
+    const float snr_norm = std::max(0.0f, std::min(1.0f,
+        (m.snr_db - FM_SNR_NORM_MIN) / (FM_SNR_NORM_MAX - FM_SNR_NORM_MIN)));
+#if FM_SCORE_ALGO == FM_SCORE_ALGO_GATE
+    if (m.snr_db < FM_SNR_GATE_DB || m.obw_fraction < FM_MOB_GATE_FRAC)
+        return 0.0f;
+    return snr_norm;
+#elif FM_SCORE_ALGO == FM_SCORE_ALGO_SNR_OBW
+    return snr_norm * m.obw_fraction;
+#elif FM_SCORE_ALGO == FM_SCORE_ALGO_SNR_OBW_SFM
+    return snr_norm * m.obw_fraction * m.sfm;
+#else
+    return 0.0f;
+#endif
 }
 
 // Find the top num_peaks local-maximum peaks within [ch_lo_mhz, ch_hi_mhz].
