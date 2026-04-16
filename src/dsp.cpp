@@ -309,7 +309,7 @@ FmChannelMetrics compute_fm_metrics(
     // Adjacent-channel rolloff leakage: power slopes from one edge → asymmetry near 1.
     const float obw_centre   = (obw_bins > 0) ? (lo_cut + hi_cut) / 2.0f : (n / 2.0f);
     const float obw_asymmetry = (n > 0)
-                               ? std::fabsf(obw_centre - (n / 2.0f)) / (n / 2.0f)
+                               ? std::fabs(obw_centre - (n / 2.0f)) / (n / 2.0f)
                                : 0.0f;
 
     return {snr_db, obw_fraction, sfm, crest_factor_db, obw_asymmetry, 0.0f};
