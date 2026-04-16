@@ -38,19 +38,20 @@
 // At β=0.10: frac=0.42 ≈ 100 kHz actual BW ≈ 1500 m range resolution
 // At β=0.01: frac=0.50 ≈ 100 kHz actual BW ≈ 1500 m range resolution
 // If FM_OBW_BETA changes, re-calibrate FM_MOB_GATE_FRAC on hardware.
-#define FM_MOB_GATE_FRAC       0.42f  // minimum OBW fraction to pass bandwidth gate
-#define FM_SNR_GATE_DB         15.0f  // minimum SNR (dB) to pass signal strength gate
-#define FM_OBW_ASYMMETRY_MAX   0.4f   // max OBW centroid offset from channel centre
-                                      // rejects rolloff leakage from adjacent strong stations
-                                      // real broadcast: <0.2 | adjacent leakage: >0.6
+#define FM_MOB_GATE_FRAC    0.42f  // minimum OBW fraction to pass bandwidth gate
+#define FM_SNR_GATE_DB      15.0f  // minimum SNR (dB) to pass signal strength gate
+#define FM_SFM_GATE          0.1f  // minimum spectral flatness (Wiener entropy) to pass
+                                   // rejects troughs (bimodal, SFM<0.05) and slopes (skewed, SFM<0.1)
+                                   // real FM broadcast: 0.2–0.8 depending on programme content
 
 // ── SNR normalisation (rank ordering within passing set) ─────────────────────
 #define FM_SNR_NORM_MIN      5.0f   // SNR below this → rank score = 0
 #define FM_SNR_NORM_MAX     50.0f   // SNR above this → rank score = 1 (capped)
 
 // ── Scoring algorithm ────────────────────────────────────────────────────────
-// Change FM_SCORE_ALGO + rebuild (~10 s) to switch algorithms.
-#define FM_SCORE_ALGO_GATE        0  // gate: 0 if fails SNR or OBW, else snr_norm
+// All algorithms share gates: SNR >= FM_SNR_GATE_DB, OBW >= FM_MOB_GATE_FRAC,
+// SFM >= FM_SFM_GATE. Change FM_SCORE_ALGO + rebuild (~10s) to switch scoring.
+#define FM_SCORE_ALGO_GATE        0  // gate only: score = snr_norm
 #define FM_SCORE_ALGO_SNR_OBW     1  // continuous: snr_norm × obw_fraction
 #define FM_SCORE_ALGO_SNR_OBW_SFM 2  // continuous: snr_norm × obw_fraction × sfm
 #define FM_SCORE_ALGO  FM_SCORE_ALGO_GATE

@@ -317,12 +317,15 @@ FmChannelMetrics compute_fm_metrics(
 
 float fm_score(const FmChannelMetrics& m)
 {
+    // Shared gates — applied before all scoring algorithms
+    if (m.snr_db       < FM_SNR_GATE_DB   ||
+        m.obw_fraction < FM_MOB_GATE_FRAC  ||
+        m.sfm          < FM_SFM_GATE)
+        return 0.0f;
+
     const float snr_norm = std::max(0.0f, std::min(1.0f,
         (m.snr_db - FM_SNR_NORM_MIN) / (FM_SNR_NORM_MAX - FM_SNR_NORM_MIN)));
 #if FM_SCORE_ALGO == FM_SCORE_ALGO_GATE
-    if (m.snr_db < FM_SNR_GATE_DB || m.obw_fraction < FM_MOB_GATE_FRAC
-                                   || m.obw_asymmetry > FM_OBW_ASYMMETRY_MAX)
-        return 0.0f;
     return snr_norm;
 #elif FM_SCORE_ALGO == FM_SCORE_ALGO_SNR_OBW
     return snr_norm * m.obw_fraction;

@@ -413,45 +413,38 @@ TEST_CASE("FM metrics: eps floor — single zero bin in OBW does not collapse sf
     CHECK(m.crest_factor_db < 10.0f); // mostly uniform: max/mean near 1 → CF ≈ 0 dB
 }
 
-// ── 14. OBW asymmetry ────────────────────────────────────────────────────────
+// ── 14. SFM gate — trough and slope rejection ────────────────────────────────
 
-TEST_CASE("FM metrics: centred signal → obw_asymmetry near 0", "[dsp][fm][asymmetry]")
+TEST_CASE("fm_score: trough (bimodal edges) → score = 0 via SFM gate", "[dsp][fm][sfm]")
 {
-    // Uniform signal across full channel — OBW centred → asymmetry ≈ 0
-    const float noise_db   = -87.0f;
-    const float channel_db = -60.0f;
-    const float fc         = 98.7f;
-    const float bin_mhz    = (float)SAMPLE_RATE_HZ / 1e6f / N_FFT;
-    std::vector<float> raw(N_FFT, noise_db);
-
-    int lo = N_FFT / 2 + (int)std::round(-0.1f / bin_mhz);
-    int hi = N_FFT / 2 + (int)std::round( 0.1f / bin_mhz);
-    for (int k = lo; k <= hi; k++) raw[k] = channel_db;
-
-    FmChannelMetrics m = compute_fm_metrics(raw.data(), N_FFT, fc, fc - 0.1f, fc + 0.1f, noise_db);
-    INFO("obw_asymmetry=" << m.obw_asymmetry);
-    CHECK(m.obw_asymmetry < FM_OBW_ASYMMETRY_MAX);
+    // Two edge spikes simulate trough between adjacent stations.
+    // Bimodal power → SFM near 0 → should fail SFM gate.
+    FmChannelMetrics m{};
+    m.snr_db       = FM_SNR_GATE_DB + 5.0f;
+    m.obw_fraction = 0.95f;   // OBW passes (edge spikes span full channel)
+    m.sfm          = 0.02f;   // bimodal → near zero
+    CHECK(fm_score(m) == 0.0f);
 }
 
-TEST_CASE("FM metrics: edge-loaded signal → obw_asymmetry above threshold", "[dsp][fm][asymmetry]")
+TEST_CASE("fm_score: slope (edge-skewed) → score = 0 via SFM gate", "[dsp][fm][sfm]")
 {
-    // Signal only in lower quarter of channel — simulates rolloff leakage from adjacent station.
-    // OBW is pushed to one edge → asymmetry should exceed FM_OBW_ASYMMETRY_MAX.
-    const float noise_db   = -87.0f;
-    const float channel_db = -50.0f;
-    const float fc         = 98.7f;
-    const float bin_mhz    = (float)SAMPLE_RATE_HZ / 1e6f / N_FFT;
-    std::vector<float> raw(N_FFT, noise_db);
+    // Power concentrated at one edge (rolloff from adjacent station).
+    // Skewed distribution → low SFM → should fail SFM gate.
+    FmChannelMetrics m{};
+    m.snr_db       = FM_SNR_GATE_DB + 5.0f;
+    m.obw_fraction = 0.80f;
+    m.sfm          = 0.07f;   // skewed → below FM_SFM_GATE
+    CHECK(fm_score(m) == 0.0f);
+}
 
-    int lo = N_FFT / 2 + (int)std::round(-0.1f / bin_mhz);
-    int hi = N_FFT / 2 + (int)std::round( 0.1f / bin_mhz);
-    int n  = hi - lo;
-    // Fill only the bottom quarter with signal
-    for (int k = lo; k < lo + n / 4; k++) raw[k] = channel_db;
-
-    FmChannelMetrics m = compute_fm_metrics(raw.data(), N_FFT, fc, fc - 0.1f, fc + 0.1f, noise_db);
-    INFO("obw_asymmetry=" << m.obw_asymmetry);
-    CHECK(m.obw_asymmetry > FM_OBW_ASYMMETRY_MAX);
+TEST_CASE("fm_score: real broadcast → passes SFM gate", "[dsp][fm][sfm]")
+{
+    // Genuine FM station: flat-ish spectrum, SFM well above gate threshold.
+    FmChannelMetrics m{};
+    m.snr_db       = FM_SNR_GATE_DB + 10.0f;
+    m.obw_fraction = 0.85f;
+    m.sfm          = 0.35f;   // typical real broadcast
+    CHECK(fm_score(m) > 0.0f);
 }
 
 // ── 12. fm_score ─────────────────────────────────────────────────────────────
@@ -478,22 +471,22 @@ TEST_CASE("fm_score: score is in [0, 1] for strong wideband signal", "[dsp][fm][
 TEST_CASE("fm_score GATE: below SNR threshold → 0", "[dsp][fm][score]")
 {
     FmChannelMetrics m{};
-    m.snr_db = FM_SNR_GATE_DB - 1.0f; m.obw_fraction = 0.9f;
+    m.snr_db = FM_SNR_GATE_DB - 1.0f; m.obw_fraction = 0.9f; m.sfm = 0.5f;
     CHECK(fm_score(m) == 0.0f);
 }
 
 TEST_CASE("fm_score GATE: below OBW threshold → 0", "[dsp][fm][score]")
 {
     FmChannelMetrics m{};
-    m.snr_db = FM_SNR_GATE_DB + 5.0f; m.obw_fraction = FM_MOB_GATE_FRAC - 0.01f;
+    m.snr_db = FM_SNR_GATE_DB + 5.0f; m.obw_fraction = FM_MOB_GATE_FRAC - 0.01f; m.sfm = 0.5f;
     CHECK(fm_score(m) == 0.0f);
 }
 
 TEST_CASE("fm_score GATE: higher SNR → higher score within passing set", "[dsp][fm][score]")
 {
     FmChannelMetrics lo_snr{}, hi_snr{};
-    lo_snr.snr_db = FM_SNR_GATE_DB + 5.0f;  lo_snr.obw_fraction = 0.80f;
-    hi_snr.snr_db = FM_SNR_GATE_DB + 20.0f; hi_snr.obw_fraction = 0.80f;
+    lo_snr.snr_db = FM_SNR_GATE_DB + 5.0f;  lo_snr.obw_fraction = 0.80f; lo_snr.sfm = 0.5f;
+    hi_snr.snr_db = FM_SNR_GATE_DB + 20.0f; hi_snr.obw_fraction = 0.80f; hi_snr.sfm = 0.5f;
     CHECK(fm_score(hi_snr) > fm_score(lo_snr));
 }
 #endif
