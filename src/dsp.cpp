@@ -277,29 +277,38 @@ FmChannelMetrics compute_fm_metrics(
     const int   obw_bins     = std::max(0, hi_cut - lo_cut + 1);
     const float obw_fraction = (float)obw_bins / n;
 
-    // 3. SFM (Wiener entropy) + crest factor within OBW only
-    // ε = noise_lin/100 (20 dB below noise floor): noise-consistent floor prevents
-    // log(0) collapse without materially affecting real broadcast signals.
-    // max_lin_obw tracked free alongside sum_lin_obw for crest factor.
-    float sum_lin_obw = 0.0f, sum_loglin_obw = 0.0f, max_lin_obw = 0.0f;
+    // 3. SFM (Wiener entropy) over full channel width + crest factor within OBW
+    // SFM over full channel (0..n-1): edge noise bins pull geo mean down for troughs
+    // and slopes (null/quiet half in channel) but less so for a real FM signal that
+    // fills most of the channel. This gives better trough/slope discrimination than
+    // computing SFM over OBW-only (where the trimmed window hides the null).
+    // ε = noise_lin/100 (20 dB below noise floor): prevents log(0) collapse.
     const float eps = noise_lin * 0.01f;
-    for (int i = lo_cut; i <= hi_cut; i++) {
-        if (lin[i] > max_lin_obw) max_lin_obw = lin[i];
-        sum_lin_obw    += lin[i];
-        sum_loglin_obw += std::log(std::max(lin[i], eps));
+    float sum_lin_full = 0.0f, sum_loglin_full = 0.0f;
+    for (int i = 0; i < n; i++) {
+        sum_lin_full    += lin[i];
+        sum_loglin_full += std::log(std::max(lin[i], eps));
     }
     float sfm = 0.0f;
-    float crest_factor_db = 0.0f;
-    if (obw_bins >= 3) {
-        const float geo   = std::exp(sum_loglin_obw / obw_bins);
-        const float arith = sum_lin_obw / obw_bins;
+    if (n >= 3) {
+        const float geo   = std::exp(sum_loglin_full / n);
+        const float arith = sum_lin_full / n;
         sfm = (arith > 0.0f) ? geo / arith : 0.0f;
-        crest_factor_db = (arith > 0.0f) ? 10.0f * std::log10(max_lin_obw / arith) : 0.0f;
     }
+
+    // OBW-only accumulation for crest factor and CPF
+    float sum_lin_obw = 0.0f, max_lin_obw = 0.0f;
+    for (int i = lo_cut; i <= hi_cut; i++) {
+        if (lin[i] > max_lin_obw) max_lin_obw = lin[i];
+        sum_lin_obw += lin[i];
+    }
+    const float arith_obw = (obw_bins > 0) ? sum_lin_obw / obw_bins : 0.0f;
+    float crest_factor_db = 0.0f;
+    if (obw_bins >= 3)
+        crest_factor_db = (arith_obw > 0.0f) ? 10.0f * std::log10(max_lin_obw / arith_obw) : 0.0f;
 
     // 4. SNR — mean power within OBW vs step-wide noise floor
     // Using OBW bins only avoids diluting signal power with silent channel edges.
-    const float arith_obw = (obw_bins > 0) ? sum_lin_obw / obw_bins : 0.0f;
     const float snr_db    = (arith_obw > noise_lin && noise_lin > 0.0f)
                           ? 10.0f * std::log10(arith_obw / noise_lin)
                           : 0.0f;
@@ -318,12 +327,6 @@ FmChannelMetrics compute_fm_metrics(
         for (int i = inner_lo; i <= inner_hi; i++)
             centre_power += lin[i];
         centre_power_frac = (sum_lin_obw > 0.0f) ? centre_power / sum_lin_obw : 0.0f;
-        if (snr_db > 10.0f)
-            std::cerr << "[cpf] fc=" << step_fc_mhz << " ch=" << ch_lo_mhz << "-" << ch_hi_mhz
-                      << " n=" << n << " obw_bins=" << obw_bins << " lo_cut=" << lo_cut << " hi_cut=" << hi_cut
-                      << " third=" << third << " inner=" << inner_lo << ".." << inner_hi
-                      << " centre=" << centre_power << " sum_obw=" << sum_lin_obw
-                      << " cpf=" << centre_power_frac << std::endl;
     }
 
     // 6. OBW asymmetry — centroid offset from channel centre, normalised to [0,1] (diagnostic).
