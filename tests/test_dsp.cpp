@@ -413,6 +413,47 @@ TEST_CASE("FM metrics: eps floor — single zero bin in OBW does not collapse sf
     CHECK(m.crest_factor_db < 10.0f); // mostly uniform: max/mean near 1 → CF ≈ 0 dB
 }
 
+// ── 14. OBW asymmetry ────────────────────────────────────────────────────────
+
+TEST_CASE("FM metrics: centred signal → obw_asymmetry near 0", "[dsp][fm][asymmetry]")
+{
+    // Uniform signal across full channel — OBW centred → asymmetry ≈ 0
+    const float noise_db   = -87.0f;
+    const float channel_db = -60.0f;
+    const float fc         = 98.7f;
+    const float bin_mhz    = (float)SAMPLE_RATE_HZ / 1e6f / N_FFT;
+    std::vector<float> raw(N_FFT, noise_db);
+
+    int lo = N_FFT / 2 + (int)std::round(-0.1f / bin_mhz);
+    int hi = N_FFT / 2 + (int)std::round( 0.1f / bin_mhz);
+    for (int k = lo; k <= hi; k++) raw[k] = channel_db;
+
+    FmChannelMetrics m = compute_fm_metrics(raw.data(), N_FFT, fc, fc - 0.1f, fc + 0.1f, noise_db);
+    INFO("obw_asymmetry=" << m.obw_asymmetry);
+    CHECK(m.obw_asymmetry < FM_OBW_ASYMMETRY_MAX);
+}
+
+TEST_CASE("FM metrics: edge-loaded signal → obw_asymmetry above threshold", "[dsp][fm][asymmetry]")
+{
+    // Signal only in lower quarter of channel — simulates rolloff leakage from adjacent station.
+    // OBW is pushed to one edge → asymmetry should exceed FM_OBW_ASYMMETRY_MAX.
+    const float noise_db   = -87.0f;
+    const float channel_db = -50.0f;
+    const float fc         = 98.7f;
+    const float bin_mhz    = (float)SAMPLE_RATE_HZ / 1e6f / N_FFT;
+    std::vector<float> raw(N_FFT, noise_db);
+
+    int lo = N_FFT / 2 + (int)std::round(-0.1f / bin_mhz);
+    int hi = N_FFT / 2 + (int)std::round( 0.1f / bin_mhz);
+    int n  = hi - lo;
+    // Fill only the bottom quarter with signal
+    for (int k = lo; k < lo + n / 4; k++) raw[k] = channel_db;
+
+    FmChannelMetrics m = compute_fm_metrics(raw.data(), N_FFT, fc, fc - 0.1f, fc + 0.1f, noise_db);
+    INFO("obw_asymmetry=" << m.obw_asymmetry);
+    CHECK(m.obw_asymmetry > FM_OBW_ASYMMETRY_MAX);
+}
+
 // ── 12. fm_score ─────────────────────────────────────────────────────────────
 
 TEST_CASE("fm_score: noise-only channel → score = 0 (all algorithms)", "[dsp][fm][score]")

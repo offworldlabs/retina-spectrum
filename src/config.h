@@ -38,8 +38,11 @@
 // At β=0.10: frac=0.42 ≈ 100 kHz actual BW ≈ 1500 m range resolution
 // At β=0.01: frac=0.50 ≈ 100 kHz actual BW ≈ 1500 m range resolution
 // If FM_OBW_BETA changes, re-calibrate FM_MOB_GATE_FRAC on hardware.
-#define FM_MOB_GATE_FRAC    0.42f   // minimum OBW fraction to pass bandwidth gate
-#define FM_SNR_GATE_DB      15.0f   // minimum SNR (dB) to pass signal strength gate
+#define FM_MOB_GATE_FRAC       0.42f  // minimum OBW fraction to pass bandwidth gate
+#define FM_SNR_GATE_DB         15.0f  // minimum SNR (dB) to pass signal strength gate
+#define FM_OBW_ASYMMETRY_MAX   0.4f   // max OBW centroid offset from channel centre
+                                      // rejects rolloff leakage from adjacent strong stations
+                                      // real broadcast: <0.2 | adjacent leakage: >0.6
 
 // ── SNR normalisation (rank ordering within passing set) ─────────────────────
 #define FM_SNR_NORM_MIN      5.0f   // SNR below this → rank score = 0

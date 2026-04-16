@@ -61,10 +61,12 @@ std::vector<ChannelPeak> find_channel_peaks(
 // ── FM channel metrics ────────────────────────────────────────────────────────
 
 struct FmChannelMetrics {
-    float snr_db;          // mean channel power vs noise floor (dB)
+    float snr_db;          // mean OBW power vs noise floor (dB)
     float obw_fraction;    // OBW as fraction of channel BW [0,1]  (uses FM_OBW_BETA)
     float sfm;             // Wiener entropy within OBW [0,1]
     float crest_factor_db; // 10·log10(max/mean) within OBW; ~3 dB=flat, >15 dB=peaked (diagnostic)
+    float obw_asymmetry;   // OBW centroid offset from channel centre [0,1]; 0=centred, 1=fully offset
+                           // high value → rolloff leakage from adjacent strong station
     float score;           // fm_score() output — pre-computed rank score, not a raw measurement
 };
 

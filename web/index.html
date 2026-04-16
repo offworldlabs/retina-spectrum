@@ -317,10 +317,10 @@ const chart = new Chart(document.getElementById('chart').getContext('2d'), {
   plugins: [channelOverlayPlugin],
   data: {
     datasets: [
-      // EMA-smoothed average [0–2]
-      { label: 'FM avg',  data: [], borderColor: COLORS[0], showLine: true, pointRadius: 0, borderWidth: 2 },
-      { label: 'VHF avg', data: [], borderColor: COLORS[1], showLine: true, pointRadius: 0, borderWidth: 2 },
-      { label: 'UHF avg', data: [], borderColor: COLORS[2], showLine: true, pointRadius: 0, borderWidth: 2 },
+      // Ring-averaged spectrum [0–2]
+      { label: 'FM',  data: [], borderColor: COLORS[0], showLine: true, pointRadius: 0, borderWidth: 2 },
+      { label: 'VHF', data: [], borderColor: COLORS[1], showLine: true, pointRadius: 0, borderWidth: 2 },
+      { label: 'UHF', data: [], borderColor: COLORS[2], showLine: true, pointRadius: 0, borderWidth: 2 },
       // Confirmed pilot/peak dots [3]
       {
         label: 'pilot', data: [],
@@ -414,7 +414,7 @@ function bandIdx(msg) {
   return 2;                              // UHF
 }
 
-// stepSlots[step] = { bi, avgPts, livePts }
+// stepSlots[step] = { bi, avgPts }
 const stepSlots = {};
 
 function insertSorted(arr, pt) {

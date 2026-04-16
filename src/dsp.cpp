@@ -297,13 +297,22 @@ FmChannelMetrics compute_fm_metrics(
         crest_factor_db = (arith > 0.0f) ? 10.0f * std::log10(max_lin_obw / arith) : 0.0f;
     }
 
-    // 4. SNR — mean channel power vs noise floor
-    const float arith_all = total / n;
-    const float snr_db    = (arith_all > noise_lin && noise_lin > 0.0f)
-                          ? 10.0f * std::log10(arith_all / noise_lin)
+    // 4. SNR — mean power within OBW vs step-wide noise floor
+    // Using OBW bins only avoids diluting signal power with silent channel edges.
+    const float arith_obw = (obw_bins > 0) ? sum_lin_obw / obw_bins : 0.0f;
+    const float snr_db    = (arith_obw > noise_lin && noise_lin > 0.0f)
+                          ? 10.0f * std::log10(arith_obw / noise_lin)
                           : 0.0f;
 
-    return {snr_db, obw_fraction, sfm, crest_factor_db, 0.0f};
+    // 5. OBW asymmetry — centroid offset from channel centre, normalised to [0,1].
+    // Real broadcast: OBW centred → asymmetry near 0.
+    // Adjacent-channel rolloff leakage: power slopes from one edge → asymmetry near 1.
+    const float obw_centre   = (obw_bins > 0) ? (lo_cut + hi_cut) / 2.0f : (n / 2.0f);
+    const float obw_asymmetry = (n > 0)
+                               ? std::fabsf(obw_centre - (n / 2.0f)) / (n / 2.0f)
+                               : 0.0f;
+
+    return {snr_db, obw_fraction, sfm, crest_factor_db, obw_asymmetry, 0.0f};
 }
 
 float fm_score(const FmChannelMetrics& m)
@@ -311,7 +320,8 @@ float fm_score(const FmChannelMetrics& m)
     const float snr_norm = std::max(0.0f, std::min(1.0f,
         (m.snr_db - FM_SNR_NORM_MIN) / (FM_SNR_NORM_MAX - FM_SNR_NORM_MIN)));
 #if FM_SCORE_ALGO == FM_SCORE_ALGO_GATE
-    if (m.snr_db < FM_SNR_GATE_DB || m.obw_fraction < FM_MOB_GATE_FRAC)
+    if (m.snr_db < FM_SNR_GATE_DB || m.obw_fraction < FM_MOB_GATE_FRAC
+                                   || m.obw_asymmetry > FM_OBW_ASYMMETRY_MAX)
         return 0.0f;
     return snr_norm;
 #elif FM_SCORE_ALGO == FM_SCORE_ALGO_SNR_OBW
