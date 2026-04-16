@@ -304,20 +304,40 @@ FmChannelMetrics compute_fm_metrics(
                           ? 10.0f * std::log10(arith_obw / noise_lin)
                           : 0.0f;
 
-    // 5. OBW asymmetry — centroid offset from channel centre, normalised to [0,1].
-    // Real broadcast: OBW centred → asymmetry near 0.
-    // Adjacent-channel rolloff leakage: power slopes from one edge → asymmetry near 1.
-    const float obw_centre   = (obw_bins > 0) ? (lo_cut + hi_cut) / 2.0f : (n / 2.0f);
+    // 5. Centre power fraction — fraction of OBW power in the middle third.
+    // Splits OBW into three equal thirds; sums the inner third vs total OBW power.
+    // Real FM: ~0.33–0.50 (uniform or carrier-heavy centre).
+    // Trough (null between two adjacent stations): ~0.02–0.10 → rejected by gate.
+    // Slope (one-sided rolloff from adjacent station): ~0.10–0.25 → rejected by gate.
+    float centre_power_frac = 0.0f;
+    if (obw_bins >= 3) {
+        const int third    = obw_bins / 3;
+        const int inner_lo = lo_cut + third;
+        const int inner_hi = hi_cut - third;
+        float centre_power = 0.0f;
+        for (int i = inner_lo; i <= inner_hi; i++)
+            centre_power += lin[i];
+        centre_power_frac = (sum_lin_obw > 0.0f) ? centre_power / sum_lin_obw : 0.0f;
+        if (snr_db > 10.0f)
+            std::cerr << "[cpf] fc=" << step_fc_mhz << " ch=" << ch_lo_mhz << "-" << ch_hi_mhz
+                      << " n=" << n << " obw_bins=" << obw_bins << " lo_cut=" << lo_cut << " hi_cut=" << hi_cut
+                      << " third=" << third << " inner=" << inner_lo << ".." << inner_hi
+                      << " centre=" << centre_power << " sum_obw=" << sum_lin_obw
+                      << " cpf=" << centre_power_frac << std::endl;
+    }
+
+    // 6. OBW asymmetry — centroid offset from channel centre, normalised to [0,1] (diagnostic).
+    const float obw_centre    = (obw_bins > 0) ? (lo_cut + hi_cut) / 2.0f : (n / 2.0f);
     const float obw_asymmetry = (n > 0)
                                ? std::fabs(obw_centre - (n / 2.0f)) / (n / 2.0f)
                                : 0.0f;
 
-    return {snr_db, obw_fraction, sfm, crest_factor_db, obw_asymmetry, 0.0f};
+    return {snr_db, obw_fraction, sfm, centre_power_frac, crest_factor_db, obw_asymmetry, 0.0f};
 }
 
 float fm_score(const FmChannelMetrics& m)
 {
-    // Shared gates — applied before all scoring algorithms
+    // Base gates — SNR, OBW, SFM applied to all algorithms
     if (m.snr_db       < FM_SNR_GATE_DB   ||
         m.obw_fraction < FM_MOB_GATE_FRAC  ||
         m.sfm          < FM_SFM_GATE)
@@ -331,6 +351,12 @@ float fm_score(const FmChannelMetrics& m)
     return snr_norm * m.obw_fraction;
 #elif FM_SCORE_ALGO == FM_SCORE_ALGO_SNR_OBW_SFM
     return snr_norm * m.obw_fraction * m.sfm;
+#elif FM_SCORE_ALGO == FM_SCORE_ALGO_SNR_OBW_CPF
+    if (m.centre_power_frac < FM_CENTRE_POWER_GATE) return 0.0f;
+    return snr_norm * m.obw_fraction * m.centre_power_frac;
+#elif FM_SCORE_ALGO == FM_SCORE_ALGO_GATE_CPF
+    if (m.centre_power_frac < FM_CENTRE_POWER_GATE) return 0.0f;
+    return snr_norm;
 #else
     return 0.0f;
 #endif
