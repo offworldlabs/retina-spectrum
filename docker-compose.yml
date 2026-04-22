@@ -6,7 +6,10 @@ services:
     pid: "host"               # required for SDRplay service access — matches blah2
     privileged: true          # required for USB SDR access
     volumes:
-      # Matched exactly to retina-node docker-compose.yml
       - /dev/shm:/dev/shm:rw
       - /dev/bus/usb:/dev/bus/usb:rw
-      - /usr/local/lib/libsdrplay_api.so.3.15:/usr/local/lib/libsdrplay_api.so.3:ro
+      # .so and sdrplay_apiService are baked into the image (from blah2-arm/lib/sdrplay-3.15.2/arm64/)
+      # No host bind-mounts needed — version is pinned at build time, matches blah2-arm exactly.
+    # Kill any stale sdrplay_apiService on the host before launch (pid:host lets us reach host processes).
+    # Mirrors blah2's sdrplay-restart.sh — library auto-starts a fresh instance on open.
+    command: bash -c "pkill -9 -x sdrplay_apiService 2>/dev/null || true && sleep 2 && retina-spectrum --web-dir /web"

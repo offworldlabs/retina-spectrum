@@ -9,17 +9,21 @@
 
 #include "dsp.h"
 
+#include <algorithm>
 #include <cmath>
 #include <fftw3.h>
 #include <iostream>
 
 // Static resources — allocated once, reused across steps.
 // Safe: only the sweep thread ever calls process_step().
-static fftwf_complex *s_fft_buf = nullptr;
-static fftwf_plan     s_plan    = nullptr;
+static fftwf_complex *s_fft_buf   = nullptr;
+static fftwf_plan     s_plan      = nullptr;
 static float          s_window[N_FFT];
-static float          s_linear[N_FFT];   // heap-allocated via static — avoids 32 KB stack frame
-static bool           s_init    = false;
+static float          s_linear[N_FFT];    // per-FFT fftshifted magnitude², heap via static
+static float          s_raw_acc[N_FFT];        // accumulator across N_AVG FFTs (linear power)
+static float          s_raw_db[N_FFT];         // averaged dBFS — exposed via get_raw_db()
+static float          s_raw_linear_out[N_FFT]; // normalised linear power — exposed via get_raw_linear()
+static bool           s_init      = false;
 
 static void dsp_init()
 {
@@ -59,7 +63,8 @@ std::array<float, N_DISPLAY> process_step(
     if (!s_init) dsp_init();
 
     constexpr int GROUP = N_FFT / N_DISPLAY;
-    std::array<float, N_DISPLAY> acc{};  // linear power accumulator across N_AVG FFTs
+    std::array<float, N_DISPLAY> acc{};  // display bin accumulator across N_AVG FFTs
+    for (int k = 0; k < N_FFT; k++) s_raw_acc[k] = 0.0f;  // reset raw accumulator
 
     for (int avg = 0; avg < N_AVG; avg++)
     {
@@ -78,13 +83,14 @@ std::array<float, N_DISPLAY> process_step(
         // ── 2. FFT ────────────────────────────────────────────────────────
         fftwf_execute(s_plan);
 
-        // ── 3. fftshift + magnitude squared ──────────────────────────────
+        // ── 3. fftshift + magnitude squared + raw accumulate ─────────────
         for (int k = 0; k < N_FFT; k++)
         {
             int ks = (k + N_FFT / 2 + 1) % N_FFT;
             float re = s_fft_buf[ks][0];
             float im = s_fft_buf[ks][1];
-            s_linear[k] = re * re + im * im;
+            s_linear[k]   = re * re + im * im;
+            s_raw_acc[k] += s_linear[k];  // full-resolution accumulation for peak detection
         }
 
         // ── 4. Decimate: peak-detect within each display bin group ───────
@@ -104,6 +110,11 @@ std::array<float, N_DISPLAY> process_step(
     // ── 5. Average across N_AVG FFTs, then dBFS ──────────────────────────────
     //    dBFS = 10*log10(power / N_FFT²),  norm accounts for FFT scaling
     const float norm = (float)N_FFT * (float)N_FFT;
+    for (int k = 0; k < N_FFT; k++)
+    {
+        float p = (s_raw_acc[k] / N_AVG) / norm;
+        s_raw_db[k] = (p > 0.0f) ? 10.0f * log10f(p) : -120.0f;
+    }
     std::array<float, N_DISPLAY> display;
     for (int d = 0; d < N_DISPLAY; d++)
     {
@@ -125,6 +136,7 @@ std::array<float, N_DISPLAY_FOCUS> process_step_focus(
 
     constexpr int GROUP = N_FFT / N_DISPLAY_FOCUS;  // = 8 FFT bins per display bin
     std::array<float, N_DISPLAY_FOCUS> acc{};
+    for (int k = 0; k < N_FFT; k++) s_raw_acc[k] = 0.0f;
 
     for (int avg = 0; avg < N_AVG; avg++)
     {
@@ -143,7 +155,8 @@ std::array<float, N_DISPLAY_FOCUS> process_step_focus(
             int ks = (k + N_FFT / 2 + 1) % N_FFT;
             float re = s_fft_buf[ks][0];
             float im = s_fft_buf[ks][1];
-            s_linear[k] = re * re + im * im;
+            s_linear[k]   = re * re + im * im;
+            s_raw_acc[k] += s_linear[k];
         }
 
         for (int d = 0; d < N_DISPLAY_FOCUS; d++)
@@ -157,6 +170,11 @@ std::array<float, N_DISPLAY_FOCUS> process_step_focus(
     }
 
     const float norm = (float)N_FFT * (float)N_FFT;
+    for (int k = 0; k < N_FFT; k++)
+    {
+        float p = (s_raw_acc[k] / N_AVG) / norm;
+        s_raw_db[k] = (p > 0.0f) ? 10.0f * log10f(p) : -120.0f;
+    }
     std::array<float, N_DISPLAY_FOCUS> display;
     for (int d = 0; d < N_DISPLAY_FOCUS; d++)
     {
@@ -176,4 +194,168 @@ std::array<float, N_DISPLAY> freq_axis(float fc_mhz)
     for (int d = 0; d < N_DISPLAY; d++)
         freqs[d] = f_start + (d + 0.5f) * bin_width;
     return freqs;
+}
+
+// ── Channel peak detection ────────────────────────────────────────────────────
+
+const float* get_raw_db()
+{
+    return s_raw_db;
+}
+
+const float* get_raw_linear()
+{
+    const float norm = (float)N_FFT * (float)N_FFT;
+    for (int k = 0; k < N_FFT; k++)
+        s_raw_linear_out[k] = (s_raw_acc[k] / N_AVG) / norm;
+    return s_raw_linear_out;
+}
+
+// ── FM channel metrics ────────────────────────────────────────────────────────
+
+float estimate_step_noise_floor(const float* raw_db, int n_fft)
+{
+    // Convert all bins to linear power, find 25th percentile via nth_element O(n).
+    // In a dense FM market <20% of bins are occupied so the 25th percentile always
+    // lands on noise-only bins regardless of how many stations are active.
+    std::vector<float> lin(n_fft);
+    for (int k = 0; k < n_fft; k++)
+        lin[k] = std::pow(10.0f, raw_db[k] / 10.0f);
+
+    int p25 = n_fft / 4;
+    std::nth_element(lin.begin(), lin.begin() + p25, lin.end());
+    return (lin[p25] > 0.0f) ? 10.0f * std::log10(lin[p25]) : -120.0f;
+}
+
+FmChannelMetrics compute_fm_metrics(
+    const float* raw_db,
+    int          n_fft,
+    float        step_fc_mhz,
+    float        ch_lo_mhz,
+    float        ch_hi_mhz,
+    float        noise_db)
+{
+    const float bin_mhz = (float)SAMPLE_RATE_HZ / 1e6f / n_fft;
+    auto freq_to_idx = [&](float f_mhz) -> int {
+        int idx = n_fft / 2 + (int)roundf((f_mhz - step_fc_mhz) / bin_mhz);
+        return std::max(0, std::min(n_fft - 1, idx));
+    };
+
+    int lo = freq_to_idx(ch_lo_mhz);
+    int hi = freq_to_idx(ch_hi_mhz);
+    int n  = hi - lo;
+    if (n <= 0) return {};
+
+    // 0. noise_lin first — used for both SNR and SFM ε floor
+    const float noise_lin = std::pow(10.0f, noise_db / 10.0f);
+
+    // 1. Convert channel bins to linear power
+    std::vector<float> lin(n);
+    float total = 0.0f;
+    for (int i = 0; i < n; i++) {
+        lin[i] = std::pow(10.0f, raw_db[lo + i] / 10.0f);
+        total += lin[i];
+    }
+
+    // 2. OBW — ITU-R SM.443-4 β/2 method (FM_OBW_BETA power containment)
+    // Integrate from each edge until (FM_OBW_BETA/2) of total power is consumed.
+    // At β=0.10 (90%): each edge must accumulate 5% of total power before cutting,
+    // making it much harder for a single adjacent-channel leakage bin to inflate OBW.
+    const float beta_half = (FM_OBW_BETA / 2.0f) * total;
+    float cum = 0.0f;
+    int lo_cut = 0;
+    for (int i = 0; i < n; i++) {
+        cum += lin[i];
+        if (cum >= beta_half) { lo_cut = i; break; }
+    }
+    cum = 0.0f;
+    int hi_cut = n - 1;
+    for (int i = n - 1; i >= 0; i--) {
+        cum += lin[i];
+        if (cum >= beta_half) { hi_cut = i; break; }
+    }
+    const int   obw_bins     = std::max(0, hi_cut - lo_cut + 1);
+    const float obw_fraction = (float)obw_bins / n;
+
+    // 3. OBW power sum for SNR
+    float sum_lin_obw = 0.0f;
+    for (int i = lo_cut; i <= hi_cut; i++)
+        sum_lin_obw += lin[i];
+
+    // SFM, crest factor, CPF — commented out, delegated to towers API
+    // const float sfm = ..., crest_factor_db = ..., centre_power_frac = ...;
+
+    // 4. SNR — mean power within OBW vs step-wide noise floor
+    // Using OBW bins only avoids diluting signal power with silent channel edges.
+    const float arith_obw = (obw_bins > 0) ? sum_lin_obw / obw_bins : 0.0f;
+    const float snr_db    = (arith_obw > noise_lin && noise_lin > 0.0f)
+                          ? 10.0f * std::log10(arith_obw / noise_lin)
+                          : 0.0f;
+
+    return {snr_db, obw_fraction, 0.0f};
+}
+
+float fm_score(const FmChannelMetrics& m)
+{
+    // Gate: SNR + OBW. Shape classification delegated to towers API.
+    if (m.snr_db       < FM_SNR_GATE_DB  ||
+        m.obw_fraction < FM_MOB_GATE_FRAC)
+        return 0.0f;
+
+    return std::max(0.0f, std::min(1.0f,
+        (m.snr_db - FM_SNR_NORM_MIN) / (FM_SNR_NORM_MAX - FM_SNR_NORM_MIN)));
+}
+
+// Find the top num_peaks local-maximum peaks within [ch_lo_mhz, ch_hi_mhz].
+// Operates on the full-resolution N_FFT dBFS array from the last DSP step.
+// Peaks are sorted by power descending. pilot_mhz=0.0 skips the pilot check.
+std::vector<ChannelPeak> find_channel_peaks(
+    const float* raw_db,
+    int          n_fft,
+    float        step_fc_mhz,
+    float        ch_lo_mhz,
+    float        ch_hi_mhz,
+    float        pilot_mhz,
+    float        tol_mhz,
+    int          num_peaks)
+{
+    // Bin width in MHz
+    const float bin_mhz = (float)SAMPLE_RATE_HZ / 1e6f / n_fft;  // ~0.000977 MHz
+
+    // Convert channel edges to indices in the fftshifted raw_db array.
+    // raw_db[n_fft/2] ≈ DC (step_fc_mhz). Positive offset → higher index.
+    auto freq_to_idx = [&](float f_mhz) -> int {
+        int idx = n_fft / 2 + (int)roundf((f_mhz - step_fc_mhz) / bin_mhz);
+        return std::max(1, std::min(n_fft - 2, idx));
+    };
+
+    int lo = freq_to_idx(ch_lo_mhz);
+    int hi = freq_to_idx(ch_hi_mhz);
+    if (lo >= hi) return {};
+
+    // Collect local maxima: raw_db[k] > both neighbours
+    struct Candidate { int idx; float power; };
+    std::vector<Candidate> candidates;
+    for (int k = lo + 1; k < hi; k++)
+        if (raw_db[k] > raw_db[k - 1] && raw_db[k] > raw_db[k + 1])
+            candidates.push_back({k, raw_db[k]});
+
+    // Sort by power descending, keep top num_peaks
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Candidate& a, const Candidate& b){ return a.power > b.power; });
+    if ((int)candidates.size() > num_peaks)
+        candidates.resize(num_peaks);
+
+    // Convert to ChannelPeak results
+    std::vector<ChannelPeak> result;
+    result.reserve(candidates.size());
+    for (auto& c : candidates)
+    {
+        float freq_mhz = step_fc_mhz + (c.idx - n_fft / 2) * bin_mhz;
+        bool  is_pilot = (pilot_mhz > 0.0f)
+                      && (fabsf(freq_mhz - pilot_mhz) <= tol_mhz)
+                      && (c.power >= PEAK_MIN_DBF);
+        result.push_back({freq_mhz, c.power, is_pilot});
+    }
+    return result;
 }

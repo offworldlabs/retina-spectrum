@@ -215,6 +215,7 @@ void stream_a_callback_impl(short *xi, short *xq,
     {
         if (!params->rfChanged) return;     // retune not yet in stream — discard
         g_capture_buf.clear();
+        g_capture_done      = false;        // clear any stale done flag from the ordering race in retune()
         g_waiting_rf_change = false;
         std::cerr << "[sdr] rfChanged received — capturing at new frequency" << std::endl;
         return;                             // skip this callback's samples — may be transitional
@@ -282,8 +283,9 @@ void uninitialise_device()
 void retune(double fc_hz)
 {
     chParams->tunerParams.rfFreq.rfHz = fc_hz;
+    g_waiting_rf_change = true;  // suppress callbacks BEFORE clearing done flag — closes the ordering race
+    g_capture_buf.clear();       // discard old samples so a slipped-through callback can't re-trigger threshold
     g_capture_done     = false;
-    g_waiting_rf_change = true;  // discard callbacks until params->rfChanged fires
     sdrplay_api_Update(chosenDevice->dev, g_tuner,
         sdrplay_api_Update_Tuner_Frf, sdrplay_api_Update_Ext1_None);
     // no sleep — sweep thread spins on g_capture_done with a timeout

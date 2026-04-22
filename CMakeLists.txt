@@ -47,9 +47,14 @@ if(MOCK_ONLY)
     target_include_directories(test_dsp PRIVATE src/)
     target_link_libraries(test_dsp PRIVATE PkgConfig::FFTW3F Catch2::Catch2WithMain)
 
+    add_executable(test_ring tests/test_ring.cpp)
+    target_include_directories(test_ring PRIVATE src/)
+    target_link_libraries(test_ring PRIVATE Catch2::Catch2WithMain)
+
     include(CTest)
     include(Catch)
     catch_discover_tests(test_dsp)
+    catch_discover_tests(test_ring)
 
 else()
     target_include_directories(retina-spectrum PRIVATE
