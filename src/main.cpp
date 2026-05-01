@@ -120,7 +120,8 @@ static const Channel* find_channel(float fc_mhz)
 struct ChannelResult {
     const Channel*           ch;
     std::vector<ChannelPeak> peaks;  // TV only; empty for FM
-    FmChannelMetrics         fm;     // FM only; {0,0} for TV
+    FmChannelMetrics         fm;     // FM only; zeroed for TV
+    TvChannelMetrics         tv;     // TV only; zeroed for FM
 };
 
 struct Slice {
@@ -237,8 +238,10 @@ static std::string slice_to_sse(int step, const Slice& sl, int pct, bool full_bi
                << ",\"obw_fraction\":" << cr.fm.obw_fraction
                << ",\"score\":"        << cr.fm.score;
         } else {
-            // TV: pilot peak detection
-            ss << ",\"pilot_mhz\":" << cr.ch->pilot_mhz
+            // TV: pilot detection + channel power
+            ss << ",\"pilot_mhz\":"        << cr.ch->pilot_mhz
+               << ",\"channel_power_db\":" << cr.tv.channel_power_db
+               << ",\"score\":"            << cr.tv.score
                << ",\"peaks\":[";
             for (int pi = 0; pi < (int)cr.peaks.size(); pi++) {
                 const auto& pk = cr.peaks[pi];
@@ -294,10 +297,16 @@ static const MockStation MOCK_STATIONS[] = {
     {  98.7f,   800.0f, 0.18f },  // FM strong wideband  (ch 98.7 MHz, primary test peak)
     { 103.5f,   100.0f, 0.0f  },  // FM dead air CW      (ch 103.5 MHz — bad illuminator)
     { 107.1f,   600.0f, 0.18f },  // FM strong wideband  (ch 107.1 MHz)
-    { 198.31f,  500.0f, 0.0f },  // VHF ch11 ATSC pilot (lower 198 + 0.31)
-    { 210.31f,  400.0f, 0.0f },  // VHF ch13 ATSC pilot (lower 210 + 0.31)
-    { 530.31f,  600.0f, 0.0f },  // UHF ch24 ATSC pilot (lower 530 + 0.31, center 533)
-    { 614.31f,  450.0f, 0.0f },  // UHF ch38 ATSC pilot (lower 614 + 0.31, center 617)
+    // ATSC 8-VSB: wideband data (~5.38 MHz) + CW pilot 11 dB above per-bin data level.
+    // Pilot at lower_edge + 0.31 MHz; data centred at channel fc.
+    { 201.0f,  20000.0f, 5.38f }, // VHF ch11 data  (fc=201, lower=198–204)
+    { 198.31f, 10000.0f, 0.0f }, // VHF ch11 pilot (lower+0.31) — ~12 dB above data/bin
+    { 213.0f,  16000.0f, 5.38f }, // VHF ch13 data  (fc=213, lower=210–216)
+    { 210.31f,  8000.0f, 0.0f }, // VHF ch13 pilot
+    { 533.0f,  22000.0f, 5.38f }, // UHF ch24 data  (fc=533, lower=530–536)
+    { 530.31f, 11000.0f, 0.0f }, // UHF ch24 pilot
+    { 605.0f,  18000.0f, 5.38f }, // UHF ch36 data  (fc=605, lower=602–608)
+    { 602.31f,  9000.0f, 0.0f }, // UHF ch36 pilot
 };
 
 static std::vector<std::complex<float>> mock_iq(float fc_mhz)
@@ -334,19 +343,20 @@ static std::vector<std::complex<float>> mock_iq(float fc_mhz)
                 if (phase < -(float)M_PI) phase += pi2;
             }
         } else {
-            // Wideband: one sinusoid per FFT bin across ±bw_mhz/2.
-            // Each tone lands in exactly one FFT bin (tones are at exact bin frequencies).
-            // Quadratic phase b²/num_bins spreads phases across [0, 2π] so the tones
-            // don't add coherently in the time domain, keeping peak amplitude bounded.
-            // Result: ~205 bins each at the same power → occupancy ≈ 1.0.
+            // Wideband: evenly-strided tones across ±bw_mhz/2.
+            // Stride caps the tone count at MAX_MOCK_TONES so mock runs at normal speed.
+            // tone_amp = amplitude/sqrt(num_tones) → total power = amplitude²/2
+            // regardless of stride, keeping SNR stable as stride changes.
+            constexpr int MAX_MOCK_TONES = 64;
             const float bin_hz    = fs / N_FFT;
             const int   half_bins = (int)(s.bw_mhz * 0.5e6f / bin_hz);
-            const int   num_bins  = 2 * half_bins + 1;
-            const float tone_amp  = s.amplitude / sqrtf((float)num_bins);
-            for (int b = -half_bins; b <= half_bins; b++) {
+            const int   stride    = std::max(1, (2 * half_bins + 1) / MAX_MOCK_TONES);
+            const int   num_tones = (2 * half_bins / stride) + 1;
+            const float tone_amp  = s.amplitude / sqrtf((float)num_tones);
+            for (int b = -half_bins; b <= half_bins; b += stride) {
                 float offset_hz = center_offset_hz + b * bin_hz;
                 if (fabsf(offset_hz) > 4.0e6f) continue;
-                float phase     = pi2 * (float)(b * b) / (float)num_bins;
+                float phase     = pi2 * (float)(b * b) / (float)num_tones;
                 float phase_inc = pi2 * offset_hz / fs;
                 for (int n = 0; n < N; n++) {
                     buf[n] = { buf[n].real() + tone_amp * cosf(phase),
@@ -525,7 +535,12 @@ static void sweep_fn()
                         auto peaks = find_channel_peaks(averaged_db.data(), N_FFT, fc_mhz,
                                                         lo_mhz, hi_mhz,
                                                         ch->pilot_mhz, ch->tol_mhz, NUM_CHANNEL_PEAKS);
-                        ch_results.push_back({ch, std::move(peaks), {}});
+                        const bool pilot_found = std::any_of(peaks.begin(), peaks.end(),
+                                                             [](const ChannelPeak& p){ return p.is_pilot; });
+                        TvChannelMetrics tv = compute_tv_metrics(averaged_db.data(), N_FFT, fc_mhz,
+                                                                 lo_mhz, hi_mhz, pilot_found);
+                        ChannelResult cr{}; cr.ch = ch; cr.peaks = std::move(peaks); cr.tv = tv;
+                        ch_results.push_back(std::move(cr));
                     }
                 }
             }

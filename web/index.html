@@ -180,7 +180,8 @@ function findChannel(fc) {
 
 // ── Peak state + hover state ──────────────────────────────────────────────────
 const peakDisplay  = {};   // fc_key → { hasPilot, pilotPower }
-const channelState = new Map();  // fc_mhz key → latest FM channel object, insertion order preserved
+const channelState   = new Map();  // fc_mhz.toFixed(1) → latest FM channel object
+const tvChannelState = new Map();  // fc_mhz.toFixed(3) → latest TV channel object (pilot confirmed only)
 let   hoveredChannel = null;  // Channel object under the mouse cursor (sweep mode only)
 let   activeTab      = 'vhf_uhf';  // must be before new Chart() — used in afterDraw
 
@@ -201,12 +202,19 @@ const topRankedMap = new Map();  // fc_mhz.toFixed(1) → rank number (1-based)
 function computeRanking(andRedraw = true) {
   topRankedMap.clear();
   if (rankMode) {
-    const scored = [...channelState.values()]
-      .filter(ch => ch.band === 'fm')
-      .map(ch => ({ ch, score: clientScore(ch) }))
-      .sort((a, b) => b.score - a.score);
-    // All passing stations (score > 0) get a rank; rejected stay out of the map
-    scored.filter(s => s.score > 0).forEach((s, i) => topRankedMap.set(s.ch.fc_mhz.toFixed(1), i + 1));
+    if (activeTab === 'fm') {
+      const scored = [...channelState.values()]
+        .filter(ch => ch.band === 'fm')
+        .map(ch => ({ ch, score: clientScore(ch) }))
+        .sort((a, b) => b.score - a.score);
+      scored.filter(s => s.score > 0).forEach((s, i) => topRankedMap.set(s.ch.fc_mhz.toFixed(1), i + 1));
+    } else {
+      // VHF/UHF: rank confirmed TV channels by SNR
+      const scored = [...tvChannelState.values()]
+        .map(ch => ({ ch, pwr: ch.channel_power_db ?? -999 }))
+        .sort((a, b) => b.pwr - a.pwr);
+      scored.filter(s => s.pwr > -90).forEach((s, i) => topRankedMap.set(s.ch.fc_mhz.toFixed(3), i + 1));
+    }
   }
   renderChannelList();
   if (andRedraw) chart.update('none');
@@ -256,8 +264,8 @@ const channelOverlayPlugin = {
         ctx.restore();
       }
 
-      // RANK FEATURE: green tint + rank label for top-N FM stations
-      const rankNum = topRankedMap.get(ch.fc.toFixed(1));
+      // RANK FEATURE: green tint + rank label for top-N stations (FM by .toFixed(1), TV by .toFixed(3))
+      const rankNum = topRankedMap.get(ch.fc.toFixed(1)) ?? topRankedMap.get(ch.fc.toFixed(3));
       if (rankNum !== undefined) {
         ctx.save();
         ctx.fillStyle = 'rgba(74,222,128,0.09)';
@@ -312,6 +320,24 @@ const channelOverlayPlugin = {
       ctx.fillStyle = '#4ade80';
       ctx.textAlign = 'center';
       ctx.fillText(`${pd.pilotPower.toFixed(0)} dB`, xPx, yScale.bottom - 4);
+      ctx.restore();
+    }
+
+    // SNR line — horizontal line at channel mean power for confirmed TV channels
+    for (const [key, pd] of Object.entries(peakDisplay)) {
+      if (!pd.hasPilot || pd.channelPowerDb == null) continue;
+      const ch = ALL_CHANNELS.find(c => c.fc.toFixed(3) === key);
+      if (!ch) continue;
+      const xLoPx = xScale.getPixelForValue(ch.fc - ch.bw / 2);
+      const xHiPx = xScale.getPixelForValue(ch.fc + ch.bw / 2);
+      const yPx   = yScale.getPixelForValue(pd.channelPowerDb);
+      if (yPx < yScale.top || yPx > yScale.bottom) continue;
+      ctx.save();
+      ctx.strokeStyle = '#4ade80';
+      ctx.lineWidth   = 1.5;
+      ctx.beginPath(); ctx.moveTo(xLoPx, yPx); ctx.lineTo(xHiPx, yPx); ctx.stroke();
+      ctx.font = '9px Courier New'; ctx.fillStyle = '#4ade80'; ctx.textAlign = 'center';
+      ctx.fillText(`${pd.channelPowerDb.toFixed(0)} dBFS`, (xLoPx + xHiPx) / 2, yPx - 4);
       ctx.restore();
     }
   }
@@ -471,38 +497,55 @@ function renderChannelList() {
     return;
   }
 
-  // Sweep mode
-  if (activeTab !== 'fm') {
-    el.innerHTML = '<span class="ch-placeholder">channel metrics — FM band only</span>';
+  // Sweep mode — FM
+  if (activeTab === 'fm') {
+    let channels = [...channelState.values()].filter(ch => ch.band === 'fm');
+    // RANK FEATURE: sort by client score when rank mode active
+    if (rankMode) channels.sort((a, b) => clientScore(b) - clientScore(a));
+    const rows = channels.map((ch, i) => {
+      // RANK FEATURE: highlight top-N rows
+      const key    = ch.fc_mhz.toFixed(1);
+      const isTop  = topRankedMap.has(key);
+      const rankSpan  = rankMode ? `<span class="ch-rank${isTop ? ' ch-top' : ''}">#${i+1}</span>` : '';
+      const scoreSpan = rankMode ? `<span class="ch-metric${isTop ? ' ch-top' : ''}">score ${clientScore(ch).toFixed(2)}</span>` : '';
+      return `<div class="ch-row${isTop ? ' ch-row-top' : ''}">` +
+        rankSpan +
+        `<span class="ch-label${isTop ? ' ch-top' : ''}">${key} MHz</span>` +
+        `<span class="ch-metric">SNR ${ch.snr_db.toFixed(1)} dB</span>` +
+        `<span class="ch-metric">OBW ${((ch.obw_fraction ?? 0) * 100).toFixed(0)}%</span>` +
+        scoreSpan +
+        `</div>`;
+      // END RANK FEATURE
+    });
+    el.innerHTML = rows.length
+      ? rows.join('')
+      : '<span class="ch-placeholder">no FM channels above threshold</span>';
     return;
   }
-  let channels = [...channelState.values()].filter(ch => ch.band === 'fm');
-  // RANK FEATURE: sort by client score when rank mode active
-  if (rankMode) channels.sort((a, b) => clientScore(b) - clientScore(a));
-  const rows = channels.map((ch, i) => {
-    // RANK FEATURE: highlight top-N rows
-    const key    = ch.fc_mhz.toFixed(1);
-    const isTop  = topRankedMap.has(key);
-    const rankSpan  = rankMode ? `<span class="ch-rank${isTop ? ' ch-top' : ''}">#${i+1}</span>` : '';
-    const scoreSpan = rankMode ? `<span class="ch-metric${isTop ? ' ch-top' : ''}">score ${clientScore(ch).toFixed(2)}</span>` : '';
+
+  // Sweep mode — VHF/UHF
+  let tvChannels = [...tvChannelState.values()];
+  // RANK FEATURE: sort by SNR when rank mode active
+  if (rankMode) tvChannels.sort((a, b) => (b.channel_power_db ?? -999) - (a.channel_power_db ?? -999));
+  const tvRows = tvChannels.map((ch, i) => {
+    const key   = ch.fc_mhz.toFixed(3);
+    const isTop = topRankedMap.has(key);
+    const rankSpan = rankMode ? `<span class="ch-rank${isTop ? ' ch-top' : ''}">#${i+1}</span>` : '';
     return `<div class="ch-row${isTop ? ' ch-row-top' : ''}">` +
       rankSpan +
-      `<span class="ch-label${isTop ? ' ch-top' : ''}">${key} MHz</span>` +
-      `<span class="ch-metric">SNR ${ch.snr_db.toFixed(1)} dB</span>` +
-      `<span class="ch-metric">OBW ${((ch.obw_fraction ?? 0) * 100).toFixed(0)}%</span>` +
-      scoreSpan +
+      `<span class="ch-label${isTop ? ' ch-top' : ''}">${ch.fc_mhz.toFixed(1)} MHz</span>` +
+      `<span class="ch-metric">${(ch.channel_power_db ?? 0).toFixed(1)} dBFS</span>` +
       `</div>`;
-    // END RANK FEATURE (non-rank version: just label/SNR/OBW/SFM, no rankSpan/scoreSpan/isTop)
   });
-  el.innerHTML = rows.length
-    ? rows.join('')
-    : '<span class="ch-placeholder">no FM channels above threshold</span>';
+  el.innerHTML = tvRows.length
+    ? tvRows.join('')
+    : '<span class="ch-placeholder">no TV channels detected</span>';
 }
 
 function switchTab(tab) {
   activeTab = tab;
-  // RANK FEATURE: rank button only meaningful on FM tab
-  document.getElementById('rank-btn').style.display = tab === 'fm' ? 'inline-block' : 'none';
+  // RANK FEATURE: rank button shown on both FM and VHF/UHF tabs
+  document.getElementById('rank-btn').style.display = (tab === 'fm' || tab === 'vhf_uhf') ? 'inline-block' : 'none';
   // END RANK FEATURE
   if (tab === 'fm') {
     chart.options.scales.x.min = 87.5;
@@ -612,17 +655,24 @@ function applyStep(msg) {
         channelState.set(cr.fc_mhz.toFixed(1), cr);
         hasFm = true;
       } else {
-        // TV: pilot peak display (unchanged)
+        // TV: pilot peak display + channel state for ranking
         const key = cr.fc_mhz.toFixed(3);
         const pilotPeak = cr.peaks && cr.peaks.find(p => p.is_pilot);
         if (pilotPeak) {
-          peakDisplay[key] = { hasPilot: true, pilotPower: pilotPeak.power_db, pilotFreq: pilotPeak.freq_mhz };
+          peakDisplay[key] = {
+            hasPilot: true, pilotPower: pilotPeak.power_db, pilotFreq: pilotPeak.freq_mhz,
+            channelPowerDb: cr.channel_power_db ?? null,
+            snrDb: cr.snr_db ?? 0,
+          };
+          tvChannelState.set(key, cr);  // RANK FEATURE: store for VHF/UHF ranking
         } else {
           delete peakDisplay[key];
+          tvChannelState.delete(key);
         }
       }
     }
-    if (hasFm) computeRanking(false);  // RANK FEATURE: recompute scores live; false = RAF handles redraw
+    if (hasFm) computeRanking(false);  // RANK FEATURE: recompute FM scores live
+    else if (tvChannelState.size > 0) computeRanking(false);  // RANK FEATURE: recompute TV scores live
     rebuildPilotDots();
   }
 
