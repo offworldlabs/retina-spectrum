@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Passive Radar Setup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ── Tokens ───────────────────────────────────────────────────────────── */
+:root {
+  --bg:          oklch(0.995 0.003 75);
+  --surface:     #ffffff;
+  --surface-2:   oklch(0.985 0.003 75);
+  --line:        oklch(0.93 0.005 75);
+  --line-2:      oklch(0.96 0.004 75);
+  --ink:         oklch(0.20 0.012 260);
+  --ink-2:       oklch(0.42 0.012 260);
+  --ink-3:       oklch(0.62 0.010 260);
+  --accent:      oklch(0.62 0.15 250);
+  --accent-soft: oklch(0.96 0.03 250);
+  --ok:          oklch(0.65 0.14 155);
+  --shadow-sm:   0 1px 0 oklch(0.20 0.012 260 / 0.04), 0 1px 2px oklch(0.20 0.012 260 / 0.04);
+  --shadow-md:   0 1px 0 oklch(0.20 0.012 260 / 0.04), 0 6px 24px oklch(0.20 0.012 260 / 0.06);
+  --r-sm: 6px; --r-md: 10px; --r-lg: 14px;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-feature-settings: "ss01", "cv11";
+  color: var(--ink);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+.mono {
+  font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* ── Wizard shell ─────────────────────────────────────────────────────── */
+.wiz {
+  display: flex; flex-direction: column;
+  width: 100%; min-height: 100vh;
+  background: var(--surface); color: var(--ink); font-size: 14px; line-height: 1.5;
+}
+.wiz-head {
+  display: flex; align-items: center; gap: 24px;
+  padding: 18px 28px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.wiz-brand { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.wiz-logo {
+  width: 32px; height: 32px; border-radius: 8px;
+  background: var(--ink); color: #fff;
+  display: grid; place-items: center;
+}
+.wiz-brand-text { display: flex; flex-direction: column; line-height: 1.15; flex: 0 0 auto; }
+.wiz-brand-name { font-weight: 600; font-size: 13.5px; letter-spacing: -0.01em; white-space: nowrap; }
+.wiz-brand-node { color: var(--ink-3); font-size: 12px; margin-top: 2px; white-space: nowrap; }
+.wiz-brand-node .mono { color: var(--ink-2); }
+.wiz-steps {
+  margin-left: auto; display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+}
+.wiz-step {
+  width: 24px; height: 4px; border-radius: 4px;
+  background: var(--line); transition: background .2s;
+}
+.wiz-step.done    { background: var(--ink); }
+.wiz-step.active  { background: var(--accent); }
+.wiz-step-label   { font-size: 12px; color: var(--ink-3); margin-left: 10px; white-space: nowrap; }
+.wiz-body {
+  flex: 1; padding: 36px 56px 28px;
+  display: flex; flex-direction: column; gap: 24px;
+}
+.wiz-title-row { max-width: 720px; }
+.wiz-title {
+  font-size: 26px; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 6px;
+}
+.wiz-sub { font-size: 14.5px; color: var(--ink-2); margin: 0; max-width: 560px; }
+.wiz-content { flex: 1; min-height: 0; }
+.wiz-foot {
+  display: flex; align-items: center; gap: 8px;
+  padding: 14px 28px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+.foot-spacer { flex: 1; }
+
+/* ── Buttons ──────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  border: 1px solid transparent; border-radius: 8px;
+  padding: 8px 14px; font: inherit; font-size: 13.5px; font-weight: 500;
+  letter-spacing: -0.005em; cursor: pointer; white-space: nowrap;
+  transition: background .12s, border-color .12s, color .12s, transform .05s;
+}
+.btn:active { transform: translateY(0.5px); }
+.btn[disabled] { cursor: not-allowed; opacity: 0.55; }
+.btn.primary { background: var(--ink); color: #fff; }
+.btn.primary:hover:not([disabled]) { background: oklch(0.28 0.012 260); }
+.btn.ghost { background: var(--surface); color: var(--ink-2); border-color: var(--line); }
+.btn.ghost:hover:not([disabled]) { background: var(--surface-2); color: var(--ink); }
+
+/* ── Status pill ─────────────────────────────────────────────────────── */
+.pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 5px 11px 5px 9px;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: var(--surface); font-size: 12.5px; color: var(--ink-2); font-weight: 500;
+}
+.pill-dot { width: 8px; height: 8px; border-radius: 999px; transition: box-shadow .25s, background .2s; }
+
+/* ── Spinner ─────────────────────────────────────────────────────────── */
+.spinner {
+  width: 12px; height: 12px;
+  border: 1.5px solid var(--line); border-top-color: var(--ink-2);
+  border-radius: 999px; animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Variation 2: Spectrum trace ─────────────────────────────────────── */
+.v2 { display: flex; flex-direction: column; gap: 16px; }
+.v2-top { display: flex; align-items: center; gap: 12px; }
+.v2-cursor {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 12.5px; color: var(--ink-2);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+  padding: 4px 11px;
+}
+.v2-cursor-dot { width: 7px; height: 7px; border-radius: 999px; }
+.v2-found { display: inline-flex; align-items: baseline; gap: 6px; }
+.v2-found-n { font-size: 18px; font-weight: 600; color: var(--ink); }
+.v2-found-l { font-size: 12px; color: var(--ink-3); }
+.v2-chart-wrap {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-md); padding: 12px 14px 14px;
+  box-shadow: var(--shadow-sm);
+}
+.v2-chart { width: 100%; height: 280px; display: block; }
+.v2-pre {
+  padding: 14px 16px; border: 1px dashed var(--line);
+  border-radius: var(--r-md); color: var(--ink-2); font-size: 13px;
+  background: var(--surface-2);
+}
+.v2-ok {
+  display: flex; gap: 12px; padding: 14px 16px;
+  border: 1px solid oklch(0.88 0.05 155);
+  background: oklch(0.985 0.012 155);
+  border-radius: var(--r-md); align-items: flex-start;
+}
+.v1-ok-icon {
+  width: 28px; height: 28px; border-radius: 999px;
+  background: var(--ok); color: #fff;
+  display: grid; place-items: center; flex-shrink: 0;
+}
+.v1-ok-title { font-weight: 600; font-size: 13.5px; }
+.v1-ok-sub { color: var(--ink-2); font-size: 12.5px; margin-top: 2px; }
+
+/* ── Advanced table ─────────────────────────────────────────────────── */
+.adv { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); overflow: hidden; }
+.adv-toggle {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 10px 14px; border: 0;
+  background: transparent; font: inherit; font-size: 12.5px; color: var(--ink-2); cursor: pointer;
+}
+.adv-toggle:hover { background: var(--surface-2); }
+.adv-chevron { transition: transform .15s; }
+.adv-chevron.open { transform: rotate(90deg); }
+.adv-count {
+  margin-left: auto; font-size: 11.5px; color: var(--ink-3);
+  background: var(--surface-2); padding: 1px 7px;
+  border-radius: 999px; border: 1px solid var(--line);
+}
+.adv-table-wrap { border-top: 1px solid var(--line); }
+.adv-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.adv-table th, .adv-table td { text-align: left; padding: 8px 14px; border-bottom: 1px solid var(--line-2); }
+.adv-table tbody tr:last-child td { border-bottom: 0; }
+.adv-table th {
+  font-weight: 500; color: var(--ink-3); font-size: 11.5px;
+  text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface-2);
+}
+.adv-table .num { text-align: right; }
+.adv-bdot { display: inline-block; width: 6px; height: 6px; border-radius: 999px; margin-right: 8px; vertical-align: middle; }
+.adv-empty { text-align: center !important; color: var(--ink-3); padding: 18px 14px !important; font-style: italic; }
+
+/* ── Hardware check step ─────────────────────────────────────────────── */
+.hw-list { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; max-width: 480px; }
+.hw-item {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--surface); font-size: 13.5px;
+  transition: border-color .2s, background .2s;
+}
+.hw-item.ok    { border-color: oklch(0.88 0.05 155); background: oklch(0.992 0.005 155); }
+.hw-item.warn  { border-color: oklch(0.88 0.10 75);  background: oklch(0.995 0.005 75); }
+.hw-icon {
+  width: 28px; height: 28px; border-radius: 999px; flex-shrink: 0;
+  display: grid; place-items: center;
+  background: var(--surface-2); color: var(--ink-3);
+}
+.hw-item.ok   .hw-icon { background: var(--ok);            color: #fff; }
+.hw-item.warn .hw-icon { background: oklch(0.75 0.14 75);  color: #fff; }
+.hw-text-main { font-weight: 500; }
+.hw-text-sub  { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+</style>
+</head>
+<body>
+
+<!-- ── Step 1: Hardware Check ──────────────────────────────────────────── -->
+<div id="step-hw" class="wiz">
+  <div class="wiz-head">
+    <div class="wiz-brand">
+      <div class="wiz-logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6">
+          <circle cx="12" cy="12" r="2.4"/>
+          <path d="M5 12a7 7 0 0 1 14 0"/>
+          <path d="M2 12a10 10 0 0 1 20 0" opacity=".5"/>
+        </svg>
+      </div>
+      <div class="wiz-brand-text">
+        <div class="wiz-brand-name">Passive Radar Setup</div>
+        <div class="wiz-brand-node">Node <span class="mono">PR-04A</span></div>
+      </div>
+    </div>
+    <div class="wiz-steps" role="progressbar" aria-valuenow="3" aria-valuemax="5">
+      <span class="wiz-step done"></span>
+      <span class="wiz-step done"></span>
+      <span class="wiz-step active"></span>
+      <span class="wiz-step future"></span>
+      <span class="wiz-step future"></span>
+      <span class="wiz-step-label">Step 3 of 5</span>
+    </div>
+  </div>
+
+  <div class="wiz-body">
+    <div class="wiz-title-row">
+      <h1 class="wiz-title">Connect your antenna</h1>
+      <p class="wiz-sub">Make sure your SDR dongle and reference antenna are connected before starting the RF scan.</p>
+    </div>
+    <div class="wiz-content">
+      <div class="hw-list">
+        <div id="hw-sdr" class="hw-item">
+          <div class="hw-icon">
+            <span class="spinner"></span>
+          </div>
+          <div>
+            <div class="hw-text-main">SDR receiver</div>
+            <div class="hw-text-sub" id="hw-sdr-sub">Checking for device…</div>
+          </div>
+        </div>
+        <div id="hw-ant" class="hw-item">
+          <div class="hw-icon" id="hw-ant-icon">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="1"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+            </svg>
+          </div>
+          <div>
+            <div class="hw-text-main">Reference antenna</div>
+            <div class="hw-text-sub" id="hw-ant-sub">Waiting for signal…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="wiz-foot">
+    <button class="btn ghost" disabled>
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 18l-6-6 6-6"/></svg>
+      Back
+    </button>
+    <div class="foot-spacer"></div>
+    <button id="btn-start-scan" class="btn primary" disabled onclick="startScan()">
+      Start scan
+    </button>
+  </div>
+</div>
+
+<!-- ── Step 2: Scan + Results (Design B) ───────────────────────────────── -->
+<div id="step-scan" class="wiz" style="display:none">
+  <div class="wiz-head">
+    <div class="wiz-brand">
+      <div class="wiz-logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6">
+          <circle cx="12" cy="12" r="2.4"/>
+          <path d="M5 12a7 7 0 0 1 14 0"/>
+          <path d="M2 12a10 10 0 0 1 20 0" opacity=".5"/>
+        </svg>
+      </div>
+      <div class="wiz-brand-text">
+        <div class="wiz-brand-name">Passive Radar Setup</div>
+        <div class="wiz-brand-node">Node <span class="mono">PR-04A</span></div>
+      </div>
+    </div>
+    <div class="wiz-steps" role="progressbar" aria-valuenow="3" aria-valuemax="5">
+      <span class="wiz-step done"></span>
+      <span class="wiz-step done"></span>
+      <span class="wiz-step active"></span>
+      <span class="wiz-step future"></span>
+      <span class="wiz-step future"></span>
+      <span class="wiz-step-label">Step 3 of 5</span>
+    </div>
+  </div>
+
+  <div class="wiz-body">
+    <div class="wiz-title-row">
+      <h1 class="wiz-title">Listening to the air around you</h1>
+      <p class="wiz-sub">We're checking which TV and radio transmitters this node can hear. This may take a few minutes.</p>
+    </div>
+    <div class="wiz-content">
+      <div class="v2">
+
+        <!-- Top row: status pill + cursor + found count -->
+        <div class="v2-top">
+          <span id="pill" class="pill">
+            <span id="pill-dot" class="pill-dot" style="background:#9CA3AF"></span>
+            <span id="pill-text">Ready</span>
+          </span>
+          <span id="cursor-disp" class="v2-cursor" style="display:none">
+            <span id="cursor-dot" class="v2-cursor-dot"></span>
+            <span id="cursor-freq" class="mono">88.0 MHz</span>
+          </span>
+          <div class="foot-spacer"></div>
+          <div class="v2-found">
+            <span id="found-n" class="v2-found-n mono">0</span>
+            <span class="v2-found-l">found</span>
+          </div>
+        </div>
+
+        <!-- Spectrum chart -->
+        <div class="v2-chart-wrap">
+          <svg id="chart" viewBox="0 0 720 240" class="v2-chart" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="fill-grad" x1="0" x2="0" y1="0" y2="1">
+                <stop id="grad-stop-0" offset="0%"   stop-color="#3B82F6" stop-opacity="0.45"/>
+                <stop id="grad-stop-1" offset="100%" stop-color="#3B82F6" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+            <!-- populated by initChart() -->
+          </svg>
+        </div>
+
+        <!-- Pre-scan prompt -->
+        <div id="pre-msg" class="v2-pre">
+          Press <strong>Start scan</strong> to sweep FM, VHF and UHF bands.
+          The chart will fill in as we listen.
+        </div>
+
+        <!-- Advanced metrics (hidden until scan starts) -->
+        <div id="adv-section" style="display:none">
+          <div class="adv" id="adv-panel">
+            <button class="adv-toggle" onclick="toggleAdv()" aria-expanded="false">
+              <svg class="adv-chevron" id="adv-chevron" viewBox="0 0 24 24" width="12" height="12"
+                   fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 18l6-6-6-6"/>
+              </svg>
+              <span id="adv-label">Show advanced metrics</span>
+              <span class="adv-count mono" id="adv-count">0</span>
+            </button>
+            <div id="adv-body" style="display:none">
+              <div class="adv-table-wrap">
+                <table class="adv-table">
+                  <thead>
+                    <tr>
+                      <th>Band</th>
+                      <th class="num">Freq</th>
+                      <th class="num">SNR</th>
+                      <th class="num">Power</th>
+                      <th class="num">OBW</th>
+                    </tr>
+                  </thead>
+                  <tbody id="adv-tbody">
+                    <tr><td colspan="5" class="adv-empty">No signals detected yet.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Done banner -->
+        <div id="ok-banner" class="v2-ok" style="display:none">
+          <div class="v1-ok-icon">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+                 stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 12l5 5L20 7"/>
+            </svg>
+          </div>
+          <div>
+            <div class="v1-ok-title" id="ok-title">Looking good — 0 usable transmitters</div>
+            <div class="v1-ok-sub">Send the RF profile when you continue.</div>
+          </div>
+        </div>
+
+      </div><!-- .v2 -->
+    </div><!-- .wiz-content -->
+  </div><!-- .wiz-body -->
+
+  <div class="wiz-foot">
+    <button class="btn ghost" onclick="showHwCheck()">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 18l-6-6 6-6"/></svg>
+      Back
+    </button>
+    <div class="foot-spacer"></div>
+    <button id="btn-scan-idle" class="btn primary" onclick="startScan()">Start scan</button>
+    <button id="btn-scanning" class="btn ghost" disabled style="display:none">
+      <span class="spinner"></span> Scanning…
+    </button>
+    <button id="btn-rescan"   class="btn ghost"    style="display:none" onclick="rescan()">Rescan</button>
+    <button id="btn-next"     class="btn primary"  style="display:none">
+      Send RF profile
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 18l6-6-6-6"/></svg>
+    </button>
+  </div>
+</div>
+
+<script>
+// ── Constants ─────────────────────────────────────────────────────────────
+const BANDS = [
+  { id: 'fm',      label: 'FM',  lo: 88,  hi: 108, color: '#3B82F6' },
+  { id: 'vhf_hi',  label: 'VHF', lo: 174, hi: 216, color: '#8B5CF6' },
+  { id: 'uhf',     label: 'UHF', lo: 468, hi: 608, color: '#EC4899' },
+];
+const TOTAL_SPAN = BANDS.reduce((s, b) => s + (b.hi - b.lo), 0); // 202
+
+const W = 720, H = 240, PAD = 28;
+let yMin = -85, yMax = -28;   // auto-scaled each chart update
+const HW_THR   = -70; // dBFS threshold to confirm real antenna
+
+// ── State ─────────────────────────────────────────────────────────────────
+let phase        = 'idle';   // idle | connecting | scanning | done
+let hwReady      = false;
+let userRescan   = false;    // true only when user explicitly clicks Rescan
+let detected     = [];
+// stepStore: Map<fc_mhz → {freq_start, freq_stop, power_db[]}> — raw 125 kHz bin data
+let stepStore    = new Map();
+let cursorBand   = BANDS[0];
+let cursorMhz    = 88;
+let advOpen      = false;
+let sse          = null;
+
+// SVG element refs (set by initChart)
+let elPath, elFill, elCursorLine, elCursorDot, elMarkersG;
+let gridRefs = []; // [{db, line, label}] — repositioned on Y-scale change
+
+// ── Geometry helpers ──────────────────────────────────────────────────────
+function bandOf(fc) {
+  if (fc >= 85  && fc <= 115) return BANDS[0];
+  if (fc >= 170 && fc <= 220) return BANDS[1];
+  if (fc >= 464 && fc <= 612) return BANDS[2];
+  return null;
+}
+
+function freqToT(f, band) {
+  let acc = 0;
+  for (const b of BANDS) {
+    if (b === band) return (acc + Math.max(0, Math.min(f - b.lo, b.hi - b.lo))) / TOTAL_SPAN;
+    acc += (b.hi - b.lo);
+  }
+  return 0;
+}
+
+function toX(t)  { return PAD + t * (W - 2 * PAD); }
+function toY(db) { return PAD + (1 - (db - yMin) / (yMax - yMin)) * (H - 2 * PAD); }
+
+// ── Chart initialisation ───────────────────────────────────────────────────
+function initChart() {
+  const svg = document.getElementById('chart');
+  const NS  = 'http://www.w3.org/2000/svg';
+
+  function el(tag, attrs) {
+    const e = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+    return e;
+  }
+
+  // Y gridlines — stored in gridRefs so Y positions update with auto-scale
+  for (const g of [-30, -45, -60, -75]) {
+    const y = toY(g).toFixed(1);
+    const lineEl = el('line', { x1: PAD, x2: W - PAD, y1: y, y2: y, stroke: '#EEF0F3', 'stroke-width': 1 });
+    const labelEl = el('text', { x: W - PAD + 4, y: +y + 3, 'font-size': 9, fill: '#9CA3AF', 'font-family': 'JetBrains Mono, monospace' });
+    labelEl.textContent = g;
+    svg.appendChild(lineEl);
+    svg.appendChild(labelEl);
+    gridRefs.push({ db: g, line: lineEl, label: labelEl });
+  }
+
+  // Band rails & labels
+  let acc = 0;
+  for (let i = 0; i < BANDS.length; i++) {
+    const b  = BANDS[i];
+    const x0 = toX(acc / TOTAL_SPAN);
+    const x1 = toX((acc + (b.hi - b.lo)) / TOTAL_SPAN);
+
+    // separator line
+    if (i > 0) {
+      svg.appendChild(el('line', {
+        x1: x0, x2: x0, y1: PAD, y2: H - PAD,
+        stroke: '#EEF0F3', 'stroke-dasharray': '2 3', 'stroke-width': 1,
+      }));
+    }
+    // color rail
+    svg.appendChild(el('rect', {
+      x: x0, y: H - PAD + 6, width: x1 - x0, height: 6,
+      fill: b.color, opacity: 0.18, rx: 1,
+    }));
+    // label
+    const lbl = el('text', {
+      x: (x0 + x1) / 2, y: H - PAD + 22,
+      'font-size': 9.5, 'text-anchor': 'middle', fill: '#6B7280',
+      'font-family': 'Inter, system-ui, sans-serif',
+    });
+    lbl.textContent = b.label;
+    svg.appendChild(lbl);
+
+    acc += (b.hi - b.lo);
+  }
+
+  // Fill path (under trace)
+  elFill = el('path', { d: '', fill: 'url(#fill-grad)', opacity: 0.5 });
+  svg.appendChild(elFill);
+
+  // Trace line
+  elPath = el('path', { d: '', fill: 'none', stroke: '#111827', 'stroke-width': 1.4, 'stroke-linejoin': 'round' });
+  svg.appendChild(elPath);
+
+  // Sweep cursor group
+  const curG = el('g', { id: 'cursor-g', style: 'display:none' });
+  elCursorLine = el('line', { x1: PAD, x2: PAD, y1: PAD, y2: H - PAD, 'stroke-width': 1.2 });
+  elCursorDot  = el('circle', { cx: PAD, cy: PAD, r: 3 });
+  curG.appendChild(elCursorLine);
+  curG.appendChild(elCursorDot);
+  svg.appendChild(curG);
+
+  // Markers group
+  elMarkersG = el('g', {});
+  svg.appendChild(elMarkersG);
+}
+
+// ── Chart update ───────────────────────────────────────────────────────────
+// Build SVG path from raw step bins — 125 kHz resolution, properly ordered.
+function buildPath() {
+  // Collect all (t, db) points from stored steps, sorted by virtual t
+  const pts = [];
+  for (const [fc, data] of stepStore) {
+    const band = bandOf(fc);
+    if (!band || !data.power_db) continue;
+    const bins = data.power_db;
+    const n    = bins.length;
+    for (let i = 0; i < n; i++) {
+      const f = data.freq_start + (data.freq_stop - data.freq_start) * (i / Math.max(1, n - 1));
+      // Only include bins within this band's display range
+      if (f < band.lo - 0.2 || f > band.hi + 0.2) continue;
+      const t = freqToT(Math.max(band.lo, Math.min(f, band.hi)), band);
+      pts.push({ t, db: bins[i] });
+    }
+  }
+  pts.sort((a, b) => a.t - b.t);
+
+  if (pts.length === 0) {
+    const fx = PAD.toFixed(1), lx = toX(1).toFixed(1), ny = toY(-82).toFixed(1);
+    return { line: `M${fx} ${ny} L${lx} ${ny}`,
+             fill: `M${fx} ${ny} L${lx} ${ny} L${lx} ${H - PAD} L${fx} ${H - PAD} Z` };
+  }
+
+  let line = '', fill = '';
+  pts.forEach(({ t, db }, i) => {
+    const x = toX(t).toFixed(1);
+    const y = toY(db).toFixed(1);
+    line += (i === 0 ? 'M' : 'L') + x + ' ' + y + ' ';
+    fill += (i === 0 ? 'M' : 'L') + x + ' ' + y + ' ';
+  });
+  fill += `L${toX(pts[pts.length - 1].t).toFixed(1)} ${H - PAD} L${PAD} ${H - PAD} Z`;
+  return { line, fill };
+}
+
+// Look up the peak power near a given frequency from stored step data
+function peakNear(fc_mhz, band_id) {
+  const band = BANDS.find(b => b.id === band_id);
+  if (!band) return null;
+  let best = null;
+  for (const [fc, data] of stepStore) {
+    if (bandOf(fc) !== band) continue;
+    if (!data.power_db) continue;
+    const n = data.power_db.length;
+    for (let i = 0; i < n; i++) {
+      const f = data.freq_start + (data.freq_stop - data.freq_start) * (i / Math.max(1, n - 1));
+      if (Math.abs(f - fc_mhz) < 0.5) {
+        if (best === null || data.power_db[i] > best) best = data.power_db[i];
+      }
+    }
+  }
+  return best;
+}
+
+function repositionGridlines() {
+  for (const { db, line: lineEl, label: labelEl } of gridRefs) {
+    const y = toY(db).toFixed(1);
+    lineEl.setAttribute('y1', y); lineEl.setAttribute('y2', y);
+    labelEl.setAttribute('y', (parseFloat(y) + 3).toFixed(1));
+  }
+}
+
+function redrawMarkers() {
+  clearMarkers();
+  for (const d of detected) addMarker(d.marker_fc, d.band_id, d.marker_pwr);
+}
+
+function updateChart() {
+  // Auto-scale Y: derive range from actual bin data, pad 5 dB each side, snap to 5
+  if (stepStore.size > 0) {
+    let lo = 0, hi = -999;
+    for (const [, data] of stepStore) {
+      for (const v of data.power_db) { if (v < lo) lo = v; if (v > hi) hi = v; }
+    }
+    yMin = Math.floor((lo - 5) / 5) * 5;
+    yMax = Math.ceil((hi + 5) / 5) * 5;
+    repositionGridlines();
+  }
+
+  const { line, fill } = buildPath();
+  elPath.setAttribute('d', line);
+  elFill.setAttribute('d', fill);
+  redrawMarkers();
+
+  // gradient & cursor color
+  const col = cursorBand ? cursorBand.color : '#3B82F6';
+  document.getElementById('grad-stop-0').setAttribute('stop-color', col);
+  document.getElementById('grad-stop-1').setAttribute('stop-color', col);
+
+  // cursor
+  const cg = document.getElementById('cursor-g');
+  if (phase === 'scanning' && cursorBand) {
+    const t  = freqToT(cursorMhz, cursorBand);
+    const cx = toX(t).toFixed(1);
+    elCursorLine.setAttribute('x1', cx);
+    elCursorLine.setAttribute('x2', cx);
+    elCursorLine.setAttribute('stroke', col);
+    elCursorDot.setAttribute('cx', cx);
+    elCursorDot.setAttribute('fill', col);
+    cg.style.display = '';
+  } else {
+    cg.style.display = 'none';
+  }
+}
+
+function addMarker(fc, band_id, pwrDbm) {
+  const NS  = 'http://www.w3.org/2000/svg';
+  const band = BANDS.find(b => b.id === band_id);
+  if (!band) return;
+
+  const t   = freqToT(fc, band);
+  const x   = toX(t).toFixed(1);
+  const pwr = pwrDbm != null ? pwrDbm : (peakNear(fc, band_id) ?? -82);
+  const y   = toY(pwr).toFixed(1);
+
+  const g = document.createElementNS(NS, 'g');
+
+  const vline = document.createElementNS(NS, 'line');
+  vline.setAttribute('x1', x); vline.setAttribute('x2', x);
+  vline.setAttribute('y1', y); vline.setAttribute('y2', H - PAD);
+  vline.setAttribute('stroke', band.color); vline.setAttribute('stroke-width', 1); vline.setAttribute('opacity', 0.4);
+
+  const dot = document.createElementNS(NS, 'circle');
+  dot.setAttribute('cx', x); dot.setAttribute('cy', y); dot.setAttribute('r', 2.5);
+  dot.setAttribute('fill', '#fff'); dot.setAttribute('stroke', band.color); dot.setAttribute('stroke-width', 1.6);
+
+  g.appendChild(vline);
+  g.appendChild(dot);
+  elMarkersG.appendChild(g);
+}
+
+function clearMarkers() {
+  while (elMarkersG.firstChild) elMarkersG.removeChild(elMarkersG.firstChild);
+}
+
+// ── SSE ───────────────────────────────────────────────────────────────────
+function connectSSE() {
+  if (sse) return;
+  phase = 'connecting';
+  sse = new EventSource('/api/events');
+  sse.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if      (msg.type === 'start')    handleStart(msg);
+    else if (msg.type === 'step')     handleStep(msg);
+    else if (msg.type === 'complete') handleComplete();
+  };
+  sse.onerror = () => { sse.close(); sse = null; setTimeout(connectSSE, 3000); };
+}
+
+function handleStart() {
+  // Only respond if user has clicked Start/Rescan — ignore background SSE starts
+  if (phase !== 'waiting' && phase !== 'scanning' && !(phase === 'done' && userRescan)) return;
+  userRescan = false;
+  stepStore.clear();
+  detected = [];
+  phase = 'scanning';
+  cursorBand = BANDS[0];
+  cursorMhz  = BANDS[0].lo;
+  clearMarkers();
+  updateChart();
+  updateScanUI();
+}
+
+function handleStep(msg) {
+  const band = bandOf(msg.fc_mhz);
+  if (!band) return;
+
+  cursorBand = band;
+  cursorMhz  = msg.fc_mhz;
+
+  // Hardware check
+  if (!hwReady && msg.power_db && msg.power_db.length > 0) {
+    const maxPwr = Math.max.apply(null, msg.power_db);
+    if (maxPwr > HW_THR) {
+      hwReady = true;
+      onHwDetected();
+    }
+  }
+
+  // Only accumulate data and update chart when scan is active
+  if (phase === 'scanning' || phase === 'done') {
+    if (msg.power_db && msg.power_db.length > 0) {
+      const prev = stepStore.get(msg.fc_mhz);
+      if (!prev) {
+        stepStore.set(msg.fc_mhz, { freq_start: msg.freq_start, freq_stop: msg.freq_stop, power_db: msg.power_db });
+      } else {
+        const merged = prev.power_db.map((v, i) => Math.max(v, msg.power_db[i] ?? v));
+        stepStore.set(msg.fc_mhz, { ...prev, power_db: merged });
+      }
+    }
+    if (msg.channels) {
+      for (const ch of msg.channels) processChannel(ch);
+    }
+    if (phase === 'scanning') {
+      updateChart();
+      updateCursorUI();
+    } else {
+      updateChart();
+    }
+  }
+}
+
+function handleComplete() {
+  if (phase === 'scanning') {
+    phase = 'done';
+    updateChart();
+    updateScanUI();
+  }
+  // If already done, background sweep finished — nothing to change in UI
+}
+
+function processChannel(ch) {
+  // Skip if already detected
+  if (detected.some(d => d.fc_mhz === ch.fc_mhz)) return;
+
+  if (ch.pilot_mhz == null) {
+    // FM — server only reports channels above SNR threshold
+    const obwKhz = (ch.obw_fraction * 200).toFixed(0);
+    detected.push({
+      band_id: ch.band, label: 'FM', color: BANDS[0].color,
+      fc_mhz: ch.fc_mhz, freq_label: ch.fc_mhz.toFixed(1) + ' MHz',
+      snr_db: ch.snr_db, power_db: null, obw_khz: obwKhz,
+      marker_fc: ch.fc_mhz, marker_pwr: null,
+    });
+  } else {
+    // TV — require pilot peak confirmed
+    const pilot = ch.peaks && ch.peaks.find(p => p.is_pilot);
+    if (!pilot) return;
+    const band  = BANDS.find(b => b.id === ch.band) || BANDS[2];
+    detected.push({
+      band_id: ch.band, label: band.label, color: band.color,
+      fc_mhz: ch.fc_mhz, freq_label: 'Ch ' + ch.number + ' · ' + ch.fc_mhz.toFixed(0) + ' MHz',
+      snr_db: null, power_db: pilot.power_db, obw_khz: null,
+      marker_fc: pilot.freq_mhz, marker_pwr: pilot.power_db,
+    });
+  }
+
+  updateDetectedUI();
+}
+
+// ── UI updates ─────────────────────────────────────────────────────────────
+function onHwDetected() {
+  const sdrEl  = document.getElementById('hw-sdr');
+  const antEl  = document.getElementById('hw-ant');
+  const sdrSub = document.getElementById('hw-sdr-sub');
+  const antSub = document.getElementById('hw-ant-sub');
+  const antIco = document.getElementById('hw-ant-icon');
+
+  // SDR check passes (we're receiving)
+  sdrEl.classList.add('ok');
+  sdrEl.querySelector('.hw-icon').innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>';
+  sdrSub.textContent = 'Device detected';
+
+  // Antenna check passes
+  antEl.classList.add('ok');
+  antIco.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>';
+  antSub.textContent = 'Strong signals detected — antenna ready';
+
+  // Enable start button — user must click to proceed
+  document.getElementById('btn-start-scan').disabled = false;
+}
+
+function showHwCheck() {
+  document.getElementById('step-hw').style.display  = '';
+  document.getElementById('step-scan').style.display = 'none';
+}
+
+function showScanStep() {
+  document.getElementById('step-hw').style.display  = 'none';
+  document.getElementById('step-scan').style.display = '';
+  if (phase === 'idle') {
+    // sweep already running — show idle state until next start event
+    updateScanUI();
+  }
+}
+
+function startScan() {
+  // Clear state and show scan step; 'waiting' phase holds until next SSE start event
+  stepStore.clear();
+  detected = [];
+  phase = 'waiting';
+  clearMarkers();
+  updateChart();
+  showScanStep();
+  updateScanUI();
+}
+
+function rescan() {
+  userRescan = true;
+  stepStore.clear();
+  detected = [];
+  phase = 'scanning';
+  clearMarkers();
+  updateChart();
+  updateScanUI();
+  fetch('/api/start', { method: 'POST' });
+}
+
+function updateCursorUI() {
+  const pill     = document.getElementById('pill');
+  const pillDot  = document.getElementById('pill-dot');
+  const pillText = document.getElementById('pill-text');
+  const cursorD  = document.getElementById('cursor-disp');
+  const cursorF  = document.getElementById('cursor-freq');
+  const cursorDt = document.getElementById('cursor-dot');
+
+  if (phase === 'scanning' && cursorBand) {
+    pillDot.style.background  = '#F59E0B';
+    pillDot.style.boxShadow   = '0 0 0 4px #F59E0B22';
+    pillText.textContent      = 'Listening on ' + cursorBand.label;
+    cursorD.style.display     = '';
+    cursorDt.style.background = cursorBand.color;
+    cursorF.textContent       = cursorMhz.toFixed(1) + ' MHz';
+  }
+}
+
+function updateScanUI() {
+  const preMsgEl   = document.getElementById('pre-msg');
+  const advSection = document.getElementById('adv-section');
+  const okBanner   = document.getElementById('ok-banner');
+  const btnIdle    = document.getElementById('btn-scan-idle');
+  const btnScanning = document.getElementById('btn-scanning');
+  const btnRescan  = document.getElementById('btn-rescan');
+  const btnNext    = document.getElementById('btn-next');
+  const pillDot    = document.getElementById('pill-dot');
+  const pillText   = document.getElementById('pill-text');
+  const cursorD    = document.getElementById('cursor-disp');
+
+  if (phase === 'idle' || phase === 'connecting') {
+    preMsgEl.style.display  = '';
+    advSection.style.display = 'none';
+    okBanner.style.display  = 'none';
+    btnIdle.style.display   = phase === 'idle' ? '' : 'none';
+    btnScanning.style.display = phase === 'connecting' ? '' : 'none';
+    btnRescan.style.display = 'none';
+    btnNext.style.display   = 'none';
+    pillDot.style.background = '#9CA3AF';
+    pillDot.style.boxShadow  = 'none';
+    pillText.textContent     = phase === 'connecting' ? 'Initialising…' : 'Ready';
+    cursorD.style.display    = 'none';
+  } else if (phase === 'waiting') {
+    // User clicked Start; waiting for next sweep start event
+    preMsgEl.style.display   = 'none';
+    advSection.style.display = 'none';
+    okBanner.style.display   = 'none';
+    btnIdle.style.display    = 'none';
+    btnScanning.style.display = '';
+    btnRescan.style.display  = 'none';
+    btnNext.style.display    = 'none';
+    pillDot.style.background = '#9CA3AF';
+    pillDot.style.boxShadow  = 'none';
+    pillText.textContent     = 'Starting scan…';
+    cursorD.style.display    = 'none';
+  } else if (phase === 'scanning') {
+    preMsgEl.style.display  = 'none';
+    advSection.style.display = '';
+    okBanner.style.display  = 'none';
+    btnIdle.style.display   = 'none';
+    btnScanning.style.display = '';
+    btnRescan.style.display = 'none';
+    btnNext.style.display   = 'none';
+    updateCursorUI();
+  } else if (phase === 'done') {
+    preMsgEl.style.display  = 'none';
+    advSection.style.display = '';
+    okBanner.style.display  = '';
+    btnIdle.style.display   = 'none';
+    btnScanning.style.display = 'none';
+    btnRescan.style.display = '';
+    btnNext.style.display   = '';
+    pillDot.style.background = '#10B981';
+    pillDot.style.boxShadow  = 'none';
+    pillText.textContent     = 'Scan complete';
+    cursorD.style.display    = 'none';
+    document.getElementById('ok-title').textContent =
+      'Looking good — ' + detected.length + ' usable transmitter' + (detected.length !== 1 ? 's' : '');
+  }
+}
+
+function updateDetectedUI() {
+  document.getElementById('found-n').textContent = detected.length;
+  document.getElementById('adv-count').textContent = detected.length;
+
+  const tbody = document.getElementById('adv-tbody');
+  if (detected.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" class="adv-empty">No signals detected yet.</td></tr>';
+    return;
+  }
+
+  let html = '';
+  for (const d of detected) {
+    const snrCell = d.snr_db  != null ? d.snr_db.toFixed(1) + ' dB'  : '—';
+    const pwrCell = d.power_db != null ? d.power_db.toFixed(1) + ' dBFS' : '—';
+    const obwCell = d.obw_khz  != null ? d.obw_khz + ' kHz'  : '—';
+    html += '<tr>'
+      + '<td><span class="adv-bdot" style="background:' + d.color + '"></span>' + d.label + '</td>'
+      + '<td class="num mono">' + d.freq_label + '</td>'
+      + '<td class="num mono">' + snrCell + '</td>'
+      + '<td class="num mono">' + pwrCell + '</td>'
+      + '<td class="num mono">' + obwCell + '</td>'
+      + '</tr>';
+  }
+  tbody.innerHTML = html;
+}
+
+function toggleAdv() {
+  advOpen = !advOpen;
+  const body    = document.getElementById('adv-body');
+  const chevron = document.getElementById('adv-chevron');
+  const label   = document.getElementById('adv-label');
+  const btn     = document.querySelector('.adv-toggle');
+  body.style.display   = advOpen ? '' : 'none';
+  chevron.classList.toggle('open', advOpen);
+  label.textContent    = advOpen ? 'Hide advanced metrics' : 'Show advanced metrics';
+  btn.setAttribute('aria-expanded', advOpen);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+initChart();
+connectSSE();
+</script>
+</body>
+</html>
