@@ -211,9 +211,9 @@ function computeRanking(andRedraw = true) {
     } else {
       // VHF/UHF: rank confirmed TV channels by SNR
       const scored = [...tvChannelState.values()]
-        .map(ch => ({ ch, snr: ch.snr_db ?? 0 }))
-        .sort((a, b) => b.snr - a.snr);
-      scored.filter(s => s.snr > 0).forEach((s, i) => topRankedMap.set(s.ch.fc_mhz.toFixed(3), i + 1));
+        .map(ch => ({ ch, pwr: ch.channel_power_db ?? -999 }))
+        .sort((a, b) => b.pwr - a.pwr);
+      scored.filter(s => s.pwr > -90).forEach((s, i) => topRankedMap.set(s.ch.fc_mhz.toFixed(3), i + 1));
     }
   }
   renderChannelList();
@@ -337,7 +337,7 @@ const channelOverlayPlugin = {
       ctx.lineWidth   = 1.5;
       ctx.beginPath(); ctx.moveTo(xLoPx, yPx); ctx.lineTo(xHiPx, yPx); ctx.stroke();
       ctx.font = '9px Courier New'; ctx.fillStyle = '#4ade80'; ctx.textAlign = 'center';
-      ctx.fillText(`${pd.snrDb.toFixed(0)} dB SNR`, (xLoPx + xHiPx) / 2, yPx - 4);
+      ctx.fillText(`${pd.channelPowerDb.toFixed(0)} dBFS`, (xLoPx + xHiPx) / 2, yPx - 4);
       ctx.restore();
     }
   }
@@ -526,7 +526,7 @@ function renderChannelList() {
   // Sweep mode — VHF/UHF
   let tvChannels = [...tvChannelState.values()];
   // RANK FEATURE: sort by SNR when rank mode active
-  if (rankMode) tvChannels.sort((a, b) => (b.snr_db ?? 0) - (a.snr_db ?? 0));
+  if (rankMode) tvChannels.sort((a, b) => (b.channel_power_db ?? -999) - (a.channel_power_db ?? -999));
   const tvRows = tvChannels.map((ch, i) => {
     const key   = ch.fc_mhz.toFixed(3);
     const isTop = topRankedMap.has(key);
@@ -534,8 +534,7 @@ function renderChannelList() {
     return `<div class="ch-row${isTop ? ' ch-row-top' : ''}">` +
       rankSpan +
       `<span class="ch-label${isTop ? ' ch-top' : ''}">${ch.fc_mhz.toFixed(1)} MHz</span>` +
-      `<span class="ch-metric">SNR ${(ch.snr_db ?? 0).toFixed(1)} dB</span>` +
-      `<span class="ch-metric">pwr ${(ch.channel_power_db ?? 0).toFixed(1)} dBFS</span>` +
+      `<span class="ch-metric">${(ch.channel_power_db ?? 0).toFixed(1)} dBFS</span>` +
       `</div>`;
   });
   el.innerHTML = tvRows.length

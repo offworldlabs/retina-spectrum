@@ -238,11 +238,10 @@ static std::string slice_to_sse(int step, const Slice& sl, int pct, bool full_bi
                << ",\"obw_fraction\":" << cr.fm.obw_fraction
                << ",\"score\":"        << cr.fm.score;
         } else {
-            // TV: pilot detection + channel SNR metrics
-            ss << ",\"pilot_mhz\":"      << cr.ch->pilot_mhz
-               << ",\"channel_power_db\":"<< cr.tv.channel_power_db
-               << ",\"snr_db\":"          << cr.tv.snr_db
-               << ",\"score\":"           << cr.tv.score
+            // TV: pilot detection + channel power
+            ss << ",\"pilot_mhz\":"        << cr.ch->pilot_mhz
+               << ",\"channel_power_db\":" << cr.tv.channel_power_db
+               << ",\"score\":"            << cr.tv.score
                << ",\"peaks\":[";
             for (int pi = 0; pi < (int)cr.peaks.size(); pi++) {
                 const auto& pk = cr.peaks[pi];
@@ -539,7 +538,7 @@ static void sweep_fn()
                         const bool pilot_found = std::any_of(peaks.begin(), peaks.end(),
                                                              [](const ChannelPeak& p){ return p.is_pilot; });
                         TvChannelMetrics tv = compute_tv_metrics(averaged_db.data(), N_FFT, fc_mhz,
-                                                                 lo_mhz, hi_mhz, step_noise_db, pilot_found);
+                                                                 lo_mhz, hi_mhz, pilot_found);
                         ChannelResult cr{}; cr.ch = ch; cr.peaks = std::move(peaks); cr.tv = tv;
                         ch_results.push_back(std::move(cr));
                     }

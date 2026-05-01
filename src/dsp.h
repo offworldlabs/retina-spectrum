@@ -61,9 +61,8 @@ std::vector<ChannelPeak> find_channel_peaks(
 // ── TV (ATSC) channel metrics ─────────────────────────────────────────────────
 
 struct TvChannelMetrics {
-    float channel_power_db;  // mean dBFS across full 6 MHz channel window
-    float snr_db;            // channel_power_db - noise_db; 0 if no pilot
-    float score;             // normalised [0,1]; 0 if no pilot
+    float channel_power_db;  // mean dBFS across full 6 MHz channel window; 0 if no pilot
+    float score;             // normalised [0,1] by channel power; 0 if no pilot
 };
 
 // Compute ATSC channel metrics. pilot_found = true if find_channel_peaks()
@@ -71,7 +70,7 @@ struct TvChannelMetrics {
 TvChannelMetrics compute_tv_metrics(
     const float* raw_db, int n_fft,
     float step_fc_mhz, float ch_lo_mhz, float ch_hi_mhz,
-    float noise_db, bool pilot_found);
+    bool pilot_found);
 
 // ── FM channel metrics ────────────────────────────────────────────────────────
 

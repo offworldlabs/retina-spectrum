@@ -309,9 +309,9 @@ float fm_score(const FmChannelMetrics& m)
 TvChannelMetrics compute_tv_metrics(
     const float* raw_db, int n_fft,
     float step_fc_mhz, float ch_lo_mhz, float ch_hi_mhz,
-    float noise_db, bool pilot_found)
+    bool pilot_found)
 {
-    if (!pilot_found) return {0.0f, 0.0f, 0.0f};
+    if (!pilot_found) return {0.0f, 0.0f};
 
     const float bin_mhz = (float)SAMPLE_RATE_HZ / 1e6f / n_fft;
     auto freq_to_idx = [&](float f_mhz) -> int {
@@ -322,18 +322,18 @@ TvChannelMetrics compute_tv_metrics(
     const int lo = freq_to_idx(ch_lo_mhz);
     const int hi = freq_to_idx(ch_hi_mhz);
     const int n  = hi - lo;
-    if (n <= 0) return {0.0f, 0.0f, 0.0f};
+    if (n <= 0) return {0.0f, 0.0f};
 
     float sum_lin = 0.0f;
     for (int i = lo; i < hi; i++)
         sum_lin += std::pow(10.0f, raw_db[i] / 10.0f);
 
+    // Normalise: -90 dBFS (noise floor) → 0, -30 dBFS (strong) → 1
     const float channel_power_db = 10.0f * std::log10(sum_lin / n);
-    const float snr_db = channel_power_db - noise_db;
-    const float score  = std::max(0.0f, std::min(1.0f,
-        (snr_db - FM_SNR_NORM_MIN) / (FM_SNR_NORM_MAX - FM_SNR_NORM_MIN)));
+    const float score = std::max(0.0f, std::min(1.0f,
+        (channel_power_db + 90.0f) / 60.0f));
 
-    return {channel_power_db, snr_db, score};
+    return {channel_power_db, score};
 }
 
 // Find the top num_peaks local-maximum peaks within [ch_lo_mhz, ch_hi_mhz].
