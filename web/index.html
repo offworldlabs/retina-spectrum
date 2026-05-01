@@ -314,6 +314,24 @@ const channelOverlayPlugin = {
       ctx.fillText(`${pd.pilotPower.toFixed(0)} dB`, xPx, yScale.bottom - 4);
       ctx.restore();
     }
+
+    // SNR line — horizontal line at channel mean power for confirmed TV channels
+    for (const [key, pd] of Object.entries(peakDisplay)) {
+      if (!pd.hasPilot || pd.channelPowerDb == null) continue;
+      const ch = ALL_CHANNELS.find(c => c.fc.toFixed(3) === key);
+      if (!ch) continue;
+      const xLoPx = xScale.getPixelForValue(ch.fc - ch.bw / 2);
+      const xHiPx = xScale.getPixelForValue(ch.fc + ch.bw / 2);
+      const yPx   = yScale.getPixelForValue(pd.channelPowerDb);
+      if (yPx < yScale.top || yPx > yScale.bottom) continue;
+      ctx.save();
+      ctx.strokeStyle = '#4ade80';
+      ctx.lineWidth   = 1.5;
+      ctx.beginPath(); ctx.moveTo(xLoPx, yPx); ctx.lineTo(xHiPx, yPx); ctx.stroke();
+      ctx.font = '9px Courier New'; ctx.fillStyle = '#4ade80'; ctx.textAlign = 'center';
+      ctx.fillText(`${pd.snrDb.toFixed(0)} dB SNR`, (xLoPx + xHiPx) / 2, yPx - 4);
+      ctx.restore();
+    }
   }
 };
 
@@ -616,7 +634,11 @@ function applyStep(msg) {
         const key = cr.fc_mhz.toFixed(3);
         const pilotPeak = cr.peaks && cr.peaks.find(p => p.is_pilot);
         if (pilotPeak) {
-          peakDisplay[key] = { hasPilot: true, pilotPower: pilotPeak.power_db, pilotFreq: pilotPeak.freq_mhz };
+          peakDisplay[key] = {
+            hasPilot: true, pilotPower: pilotPeak.power_db, pilotFreq: pilotPeak.freq_mhz,
+            channelPowerDb: cr.channel_power_db ?? null,
+            snrDb: cr.snr_db ?? 0,
+          };
         } else {
           delete peakDisplay[key];
         }

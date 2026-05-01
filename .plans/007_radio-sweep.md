@@ -282,3 +282,4 @@ Backend sets `freq_start`/`freq_stop` in the SSE `"start"` event using the chann
 2. **DSP unit tests:** `./build-mac/test_dsp` — existing tests pass; add one test for `find_channel_peaks()` with a synthetic spike at a known bin, verifying `is_pilot` flag and frequency accuracy.
 3. **Browser (mock):** Channel boundaries and labels visible; grey circles at top-N noise peaks; no green circles (no pilot in mock noise); TV focus shows 7 MHz span with pilot offset marked; FM focus shows 400 kHz span.
 4. **Hardware (RPi):** Active FM stations show peak circles at carrier; ATSC pilots show green circles at `lower_edge + 0.31 MHz` for transmitting TV stations.
+in s
