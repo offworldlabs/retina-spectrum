@@ -159,6 +159,17 @@ body {
 }
 .v1-ok-title { font-weight: 600; font-size: 13.5px; }
 .v1-ok-sub { color: var(--ink-2); font-size: 12.5px; margin-top: 2px; }
+.v2-warn {
+  display: flex; gap: 12px; padding: 14px 16px;
+  border: 1px solid oklch(0.88 0.12 75);
+  background: oklch(0.985 0.018 75);
+  border-radius: var(--r-md); align-items: flex-start;
+}
+.v1-warn-icon {
+  width: 28px; height: 28px; border-radius: 999px;
+  background: oklch(0.72 0.15 65); color: #fff;
+  display: grid; place-items: center; flex-shrink: 0;
+}
 
 /* ── Advanced table ─────────────────────────────────────────────────── */
 .adv { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); overflow: hidden; }
@@ -213,34 +224,10 @@ body {
 
 <!-- ── Step 1: Hardware Check ──────────────────────────────────────────── -->
 <div id="step-hw" class="wiz">
-  <div class="wiz-head">
-    <div class="wiz-brand">
-      <div class="wiz-logo" aria-hidden="true">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6">
-          <circle cx="12" cy="12" r="2.4"/>
-          <path d="M5 12a7 7 0 0 1 14 0"/>
-          <path d="M2 12a10 10 0 0 1 20 0" opacity=".5"/>
-        </svg>
-      </div>
-      <div class="wiz-brand-text">
-        <div class="wiz-brand-name">Passive Radar Setup</div>
-        <div class="wiz-brand-node">Node <span class="mono">PR-04A</span></div>
-      </div>
-    </div>
-    <div class="wiz-steps" role="progressbar" aria-valuenow="3" aria-valuemax="5">
-      <span class="wiz-step done"></span>
-      <span class="wiz-step done"></span>
-      <span class="wiz-step active"></span>
-      <span class="wiz-step future"></span>
-      <span class="wiz-step future"></span>
-      <span class="wiz-step-label">Step 3 of 5</span>
-    </div>
-  </div>
-
   <div class="wiz-body">
     <div class="wiz-title-row">
-      <h1 class="wiz-title">Connect your antenna</h1>
-      <p class="wiz-sub">Make sure your SDR dongle and reference antenna are connected before starting the RF scan.</p>
+      <h1 class="wiz-title">Connect your SDR</h1>
+      <p class="wiz-sub">Plug in your SDR dongle before starting the RF scan.</p>
     </div>
     <div class="wiz-content">
       <div class="hw-list">
@@ -251,17 +238,6 @@ body {
           <div>
             <div class="hw-text-main">SDR receiver</div>
             <div class="hw-text-sub" id="hw-sdr-sub">Checking for device…</div>
-          </div>
-        </div>
-        <div id="hw-ant" class="hw-item">
-          <div class="hw-icon" id="hw-ant-icon">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="1"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
-            </svg>
-          </div>
-          <div>
-            <div class="hw-text-main">Reference antenna</div>
-            <div class="hw-text-sub" id="hw-ant-sub">Waiting for signal…</div>
           </div>
         </div>
       </div>
@@ -282,30 +258,6 @@ body {
 
 <!-- ── Step 2: Scan + Results (Design B) ───────────────────────────────── -->
 <div id="step-scan" class="wiz" style="display:none">
-  <div class="wiz-head">
-    <div class="wiz-brand">
-      <div class="wiz-logo" aria-hidden="true">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6">
-          <circle cx="12" cy="12" r="2.4"/>
-          <path d="M5 12a7 7 0 0 1 14 0"/>
-          <path d="M2 12a10 10 0 0 1 20 0" opacity=".5"/>
-        </svg>
-      </div>
-      <div class="wiz-brand-text">
-        <div class="wiz-brand-name">Passive Radar Setup</div>
-        <div class="wiz-brand-node">Node <span class="mono">PR-04A</span></div>
-      </div>
-    </div>
-    <div class="wiz-steps" role="progressbar" aria-valuenow="3" aria-valuemax="5">
-      <span class="wiz-step done"></span>
-      <span class="wiz-step done"></span>
-      <span class="wiz-step active"></span>
-      <span class="wiz-step future"></span>
-      <span class="wiz-step future"></span>
-      <span class="wiz-step-label">Step 3 of 5</span>
-    </div>
-  </div>
-
   <div class="wiz-body">
     <div class="wiz-title-row">
       <h1 class="wiz-title">Listening to the air around you</h1>
@@ -382,7 +334,19 @@ body {
           </div>
         </div>
 
-        <!-- Done banner -->
+        <!-- Done banners -->
+        <div id="warn-banner" class="v2-warn" style="display:none">
+          <div class="v1-warn-icon">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+                 stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            </svg>
+          </div>
+          <div>
+            <div class="v1-ok-title">No TV transmitters found</div>
+            <div class="v1-ok-sub">Check your antenna connection, or try near a window or outdoors.</div>
+          </div>
+        </div>
         <div id="ok-banner" class="v2-ok" style="display:none">
           <div class="v1-ok-icon">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
@@ -391,7 +355,7 @@ body {
             </svg>
           </div>
           <div>
-            <div class="v1-ok-title" id="ok-title">Looking good — 0 usable transmitters</div>
+            <div class="v1-ok-title" id="ok-title">Looking good — 0 potential transmitters</div>
             <div class="v1-ok-sub">Send the RF profile when you continue.</div>
           </div>
         </div>
@@ -429,7 +393,9 @@ const TOTAL_SPAN = BANDS.reduce((s, b) => s + (b.hi - b.lo), 0); // 202
 
 const W = 720, H = 240, PAD = 28;
 let yMin = -85, yMax = -28;   // auto-scaled each chart update
-const HW_THR   = -70; // dBFS threshold to confirm real antenna
+
+// ── Dev flags (URL params) ─────────────────────────────────────────────────
+const DEV_NO_TV = new URLSearchParams(location.search).has('notv');
 
 // ── State ─────────────────────────────────────────────────────────────────
 let phase        = 'idle';   // idle | connecting | scanning | done
@@ -713,13 +679,10 @@ function handleStep(msg) {
   cursorBand = band;
   cursorMhz  = msg.fc_mhz;
 
-  // Hardware check
-  if (!hwReady && msg.power_db && msg.power_db.length > 0) {
-    const maxPwr = Math.max.apply(null, msg.power_db);
-    if (maxPwr > HW_THR) {
-      hwReady = true;
-      onHwDetected();
-    }
+  // Hardware check — first step received confirms SDR is connected and streaming
+  if (!hwReady) {
+    hwReady = true;
+    onHwDetected();
   }
 
   // Only accumulate data and update chart when scan is active
@@ -757,6 +720,7 @@ function handleComplete() {
 function processChannel(ch) {
   // Skip if already detected
   if (detected.some(d => d.fc_mhz === ch.fc_mhz)) return;
+  if (DEV_NO_TV && ch.pilot_mhz != null) return;
 
   if (ch.pilot_mhz == null) {
     // FM — server only reports channels above SNR threshold
@@ -786,22 +750,12 @@ function processChannel(ch) {
 // ── UI updates ─────────────────────────────────────────────────────────────
 function onHwDetected() {
   const sdrEl  = document.getElementById('hw-sdr');
-  const antEl  = document.getElementById('hw-ant');
   const sdrSub = document.getElementById('hw-sdr-sub');
-  const antSub = document.getElementById('hw-ant-sub');
-  const antIco = document.getElementById('hw-ant-icon');
 
-  // SDR check passes (we're receiving)
   sdrEl.classList.add('ok');
   sdrEl.querySelector('.hw-icon').innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>';
-  sdrSub.textContent = 'Device detected';
+  sdrSub.textContent = 'Device ready';
 
-  // Antenna check passes
-  antEl.classList.add('ok');
-  antIco.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>';
-  antSub.textContent = 'Strong signals detected — antenna ready';
-
-  // Enable start button — user must click to proceed
   document.getElementById('btn-start-scan').disabled = false;
 }
 
@@ -834,11 +788,10 @@ function rescan() {
   userRescan = true;
   stepStore.clear();
   detected = [];
-  phase = 'scanning';
+  phase = 'waiting';
   clearMarkers();
   updateChart();
   updateScanUI();
-  fetch('/api/start', { method: 'POST' });
 }
 
 function updateCursorUI() {
@@ -863,6 +816,7 @@ function updateScanUI() {
   const preMsgEl   = document.getElementById('pre-msg');
   const advSection = document.getElementById('adv-section');
   const okBanner   = document.getElementById('ok-banner');
+  const warnBanner = document.getElementById('warn-banner');
   const btnIdle    = document.getElementById('btn-scan-idle');
   const btnScanning = document.getElementById('btn-scanning');
   const btnRescan  = document.getElementById('btn-rescan');
@@ -875,6 +829,7 @@ function updateScanUI() {
     preMsgEl.style.display  = '';
     advSection.style.display = 'none';
     okBanner.style.display  = 'none';
+    warnBanner.style.display = 'none';
     btnIdle.style.display   = phase === 'idle' ? '' : 'none';
     btnScanning.style.display = phase === 'connecting' ? '' : 'none';
     btnRescan.style.display = 'none';
@@ -888,6 +843,7 @@ function updateScanUI() {
     preMsgEl.style.display   = 'none';
     advSection.style.display = 'none';
     okBanner.style.display   = 'none';
+    warnBanner.style.display = 'none';
     btnIdle.style.display    = 'none';
     btnScanning.style.display = '';
     btnRescan.style.display  = 'none';
@@ -899,26 +855,29 @@ function updateScanUI() {
   } else if (phase === 'scanning') {
     preMsgEl.style.display  = 'none';
     advSection.style.display = '';
-    okBanner.style.display  = 'none';
-    btnIdle.style.display   = 'none';
+    okBanner.style.display   = 'none';
+    warnBanner.style.display = 'none';
+    btnIdle.style.display    = 'none';
     btnScanning.style.display = '';
-    btnRescan.style.display = 'none';
-    btnNext.style.display   = 'none';
+    btnRescan.style.display  = 'none';
+    btnNext.style.display    = 'none';
     updateCursorUI();
   } else if (phase === 'done') {
-    preMsgEl.style.display  = 'none';
+    const tvFound = detected.some(d => d.band_id !== 'fm');
+    preMsgEl.style.display   = 'none';
     advSection.style.display = '';
-    okBanner.style.display  = '';
-    btnIdle.style.display   = 'none';
+    okBanner.style.display   = tvFound ? '' : 'none';
+    warnBanner.style.display = tvFound ? 'none' : '';
+    btnIdle.style.display    = 'none';
     btnScanning.style.display = 'none';
-    btnRescan.style.display = '';
-    btnNext.style.display   = '';
-    pillDot.style.background = '#10B981';
+    btnRescan.style.display  = '';
+    btnNext.style.display    = '';
+    pillDot.style.background = tvFound ? '#10B981' : '#F59E0B';
     pillDot.style.boxShadow  = 'none';
     pillText.textContent     = 'Scan complete';
     cursorD.style.display    = 'none';
     document.getElementById('ok-title').textContent =
-      'Looking good — ' + detected.length + ' usable transmitter' + (detected.length !== 1 ? 's' : '');
+      'Looking good — ' + detected.length + ' potential transmitter' + (detected.length !== 1 ? 's' : '');
   }
 }
 

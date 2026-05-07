@@ -31,31 +31,32 @@ std::atomic<bool>                g_capture_done{false};
 std::atomic<bool>                g_waiting_rf_change{false};
 
 // ── open_api — verbatim from blah2 RspDuo.cpp ────────────────────────────────
-void open_api()
+bool open_api()
 {
     float ver = 0.0;
     if ((err = sdrplay_api_Open()) != sdrplay_api_Success)
     {
         std::cerr << "Error: API open failed " << sdrplay_api_GetErrorString(err) << std::endl;
-        exit(1);
+        return false;
     }
     if ((err = sdrplay_api_ApiVersion(&ver)) != sdrplay_api_Success)
     {
         std::cerr << "Error: Set API version failed " << sdrplay_api_GetErrorString(err) << std::endl;
         sdrplay_api_Close();
-        exit(1);
+        return false;
     }
     if (ver != SDRPLAY_API_VERSION)
     {
         std::cerr << "Error: API versions do not match, local=" << SDRPLAY_API_VERSION
                   << " API=" << ver << std::endl;
         sdrplay_api_Close();
-        exit(1);
+        return false;
     }
+    return true;
 }
 
 // ── get_device — one change from blah2: single tuner mode ────────────────────
-void get_device()
+bool get_device()
 {
     unsigned int ndev = 0;
     unsigned int chosenIdx = 0;
@@ -66,7 +67,7 @@ void get_device()
         std::cerr << "Error: Lock API during device selection failed "
                   << sdrplay_api_GetErrorString(err) << std::endl;
         sdrplay_api_Close();
-        exit(1);
+        return false;
     }
     if ((err = sdrplay_api_GetDevices(devs, &ndev,
         sizeof(devs) / sizeof(sdrplay_api_DeviceT))) != sdrplay_api_Success)
@@ -75,7 +76,7 @@ void get_device()
                   << sdrplay_api_GetErrorString(err) << std::endl;
         sdrplay_api_UnlockDeviceApi();
         sdrplay_api_Close();
-        exit(1);
+        return false;
     }
     std::cerr << "[sdr] MaxDevs=" << sizeof(devs) / sizeof(sdrplay_api_DeviceT)
               << " NumDevs=" << ndev << std::endl;
@@ -84,7 +85,7 @@ void get_device()
         std::cerr << "Error: No devices found" << std::endl;
         sdrplay_api_UnlockDeviceApi();
         sdrplay_api_Close();
-        exit(1);
+        return false;
     }
 
     // pick first RSPduo (verbatim from blah2)
@@ -102,7 +103,7 @@ void get_device()
         std::cerr << "Error: Could not find RSPduo device" << std::endl;
         sdrplay_api_UnlockDeviceApi();
         sdrplay_api_Close();
-        exit(1);
+        return false;
     }
 
     chosenDevice = &devs[chosenIdx];
@@ -121,14 +122,15 @@ void get_device()
         std::cerr << "Error: Select device failed " << sdrplay_api_GetErrorString(err) << std::endl;
         sdrplay_api_UnlockDeviceApi();
         sdrplay_api_Close();
-        exit(1);
+        return false;
     }
     if ((err = sdrplay_api_UnlockDeviceApi()) != sdrplay_api_Success)
     {
         std::cerr << "Error: Unlock device API failed " << sdrplay_api_GetErrorString(err) << std::endl;
         sdrplay_api_Close();
-        exit(1);
+        return false;
     }
+    return true;
 }
 
 // ── set_device_parameters — changed: BW_8_000, IF_Zero, notches off, AGC 50Hz ─
@@ -302,8 +304,8 @@ std::vector<std::complex<float>> g_capture_buf;
 std::atomic<bool>                g_capture_done{false};
 std::atomic<bool>                g_waiting_rf_change{false};
 
-void open_api()                    {}
-void get_device()                  {}
+bool open_api()                    { return true; }
+bool get_device()                  { return true; }
 void set_device_parameters(double) {}
 void initialise_device()           {}
 void uninitialise_device()         {}

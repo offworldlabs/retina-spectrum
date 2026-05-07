@@ -699,9 +699,12 @@ int main(int argc, char *argv[])
               << "  port="   << HTTP_PORT << std::endl;
 
     if (!g_mock) {
-        open_api();
-        get_device();
-        set_device_parameters(88e6);  // initial frequency — first FM step
+        while (true) {
+            if (open_api() && get_device()) break;
+            std::cerr << "[sdr] device not ready, retrying in 5 s..." << std::endl;
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+        }
+        set_device_parameters(88e6);
         initialise_device();
     }
 
