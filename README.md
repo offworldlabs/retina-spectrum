@@ -55,6 +55,51 @@ The test suite (`tests/test_dsp.cpp`) covers:
 - End-to-end: frequency in → correct frequency + level out
 - Sidelobe suppression
 
+## Running a public demo via Cloudflare Tunnel
+
+This exposes the spectrum analyser at `spectrumx.retnode.com` through a Cloudflare Tunnel, without opening any firewall ports.
+
+### Prerequisites
+
+The node must already have `cloudflared` installed and the tunnel token configured (see owl-os README — Cloudflare Tunnel section). The tunnel token is stored at `/data/cloudflared/tunnel-token` and the service is managed by systemd.
+
+In the Cloudflare dashboard, add a public hostname route for the tunnel:
+
+- **Subdomain:** `spectrumx`
+- **Domain:** `retnode.com`
+- **Service:** `http://<pi-ip>:3020`
+
+### Bring down radar services
+
+The RSPduo can only be claimed by one process at a time. Stop the main radar stack before starting the spectrum analyser:
+
+```bash
+cd /data/mender-docker-compose/current/manifests
+docker compose -p retina-node down
+```
+
+### Start the spectrum analyser
+
+Clone or pull the repo to `/data/dev/retina-spectrum` (recommended path), then bring it up:
+
+```bash
+cd /data/dev/retina-spectrum
+docker compose up --build
+```
+
+The analyser is now accessible at `https://spectrumx.retnode.com`.
+
+### Teardown
+
+```bash
+# In /data/dev/retina-spectrum
+docker compose down
+
+# Restore the main radar stack
+cd /data/mender-docker-compose/current/manifests
+docker compose -p retina-node up -d
+```
+
 ## Architecture
 
 - `src/main.cpp` — sweep thread, SSE broadcast, HTTP API (cpp-httplib)
