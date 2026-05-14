@@ -699,9 +699,12 @@ int main(int argc, char *argv[])
               << "  port="   << HTTP_PORT << std::endl;
 
     if (!g_mock) {
-        open_api();
-        get_device();
-        set_device_parameters(88e6);  // initial frequency — first FM step
+        while (true) {
+            if (open_api() && get_device()) break;
+            std::cerr << "[sdr] device not ready, retrying in 5 s..." << std::endl;
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+        }
+        set_device_parameters(88e6);
         initialise_device();
     }
 
@@ -712,6 +715,17 @@ int main(int argc, char *argv[])
     httplib::Server svr;
 
     svr.Get("/", [](const httplib::Request&, httplib::Response& res) {
+        auto html = read_file(g_web_dir + "/wizard.html");
+        if (html.empty()) {
+            res.status = 404;
+            res.set_content("wizard.html not found", "text/plain");
+            std::cerr << "[http] WARN: wizard.html not found at " << g_web_dir << std::endl;
+            return;
+        }
+        res.set_content(html, "text/html");
+    });
+
+    svr.Get("/debug", [](const httplib::Request&, httplib::Response& res) {
         auto html = read_file(g_web_dir + "/index.html");
         if (html.empty()) {
             res.status = 404;

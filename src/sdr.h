@@ -36,8 +36,8 @@ extern std::atomic<bool>                g_capture_done;
 extern std::atomic<bool>                g_waiting_rf_change;
 
 // SDR lifecycle
-void open_api();
-void get_device();
+bool open_api();
+bool get_device();
 void set_device_parameters(double fc_hz);
 void initialise_device();
 void uninitialise_device();
