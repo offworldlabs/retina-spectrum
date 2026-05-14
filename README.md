@@ -100,6 +100,18 @@ cd /data/mender-docker-compose/current/manifests
 docker compose -p retina-node up -d
 ```
 
+### Troubleshooting: web UI not loading / no data
+
+The SDRplay API runs a background daemon (`sdrplay_apiService`) that persists on the host even after Docker containers are stopped. If the web UI is unreachable or the spectrum shows no data, a stale daemon is likely holding the hardware.
+
+Kill it before starting either stack:
+
+```bash
+sudo pkill -9 -f sdrplay_apiService
+```
+
+Note: `-f` is required — the process name exceeds Linux's 15-character comm limit so `-x` silently matches nothing.
+
 ## Architecture
 
 - `src/main.cpp` — sweep thread, SSE broadcast, HTTP API (cpp-httplib)
