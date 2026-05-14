@@ -1,10 +1,27 @@
 # retina-spectrum
 
-Passive radar spectrum analyser for SDRplay RSPduo. Continuously sweeps FM (88–108 MHz), VHF (174–216 MHz), and UHF (468–693 MHz) and streams results to a browser via SSE.
+Passive radar spectrum analyser for the SDRplay RSPduo. Used to identify RF illuminators — FM broadcast stations and TV transmitters — and measure their signal quality as candidate reference signals for passive radar.
+
+The system sweeps FM (88–108 MHz), VHF (174–216 MHz), and UHF (468–608 MHz) and computes per-transmitter metrics: signal strength (dBFS), SNR, and occupied bandwidth. These metrics are intended to be consumed by an external API to rank and select illuminators — the analyser surfaces the data, it does not make the ranking decision itself. The "Send RF profile" button in the wizard UI exports the full signal profile for handoff.
+
+## Interfaces
+
+The server runs on port 3020 and serves two UIs:
+
+| Route | Purpose |
+|-------|---------|
+| `http://<ip>:3020/` | **Setup wizard** — scan, signal summary, ranked illuminator list. This is the production view. |
+| `http://<ip>:3020/debug` | **Debug spectrum** — full interactive Chart.js chart, FM/VHF/UHF tabs, focus mode, rank overlay. |
+
+Use `/` for a site survey. Use `/debug` for development and signal investigation.
 
 ## Running on hardware (Raspberry Pi)
 
-Requires the SDRplay API service running on the host and the `.so` bind-mounted into the container (see `docker-compose.yml`).
+**Hardware required:**
+- SDRplay RSPduo with the SDRplay API service running on the host
+- Reference antenna connected to **SMA1 (Tuner A)** — this is the default input
+
+The container uses Tuner A (SMA1) by default. To use Tuner B (SMA2), pass `--tuner B` in the compose command.
 
 ```bash
 docker compose up --build
@@ -14,7 +31,7 @@ Open `http://<pi-ip>:3020`.
 
 ## Running on Mac (mock mode)
 
-No SDR hardware needed. Builds without the SDRplay API dependency and generates synthetic IQ data.
+No SDR hardware needed. Generates synthetic IQ data with mock FM and TV transmitters.
 
 **Prerequisites (one-time):**
 ```bash
@@ -32,7 +49,7 @@ cmake --build build-mac --parallel
 ./build-mac/retina-spectrum --mock --web-dir web
 ```
 
-Open `http://localhost:3020`.
+Open `http://localhost:3020` for the wizard or `http://localhost:3020/debug` for the full spectrum view.
 
 ## Running tests
 
@@ -71,7 +88,7 @@ In the Cloudflare dashboard, add a public hostname route for the tunnel:
 
 ### Bring down radar services
 
-The RSPduo can only be claimed by one process at a time. Stop the main radar stack before starting the spectrum analyser:
+The RSPduo can only be claimed by one process at a time. Stop the main radar stack first — this brings down blah2 and all associated services (blah2-web, blah2-api, blah2-host):
 
 ```bash
 cd /data/mender-docker-compose/current/manifests
@@ -86,6 +103,8 @@ Clone or pull the repo to `/data/dev/retina-spectrum` (recommended path), then b
 cd /data/dev/retina-spectrum
 docker compose up --build
 ```
+
+The container automatically kills any stale `sdrplay_apiService` on the host before starting.
 
 The analyser is now accessible at `https://spectrumx.retnode.com`.
 
@@ -117,4 +136,5 @@ Note: `-f` is required — the process name exceeds Linux's 15-character comm li
 - `src/main.cpp` — sweep thread, SSE broadcast, HTTP API (cpp-httplib)
 - `src/dsp.cpp` — FFT pipeline (FFTW3 float, Blackman window, peak-max decimation)
 - `src/config.h` — DSP and server constants
-- `web/index.html` — Chart.js frontend, SSE client, focus/sweep navigation
+- `web/wizard.html` — setup wizard, SVG spectrum chart, illuminator ranking
+- `web/index.html` — Chart.js debug frontend, SSE client, focus/sweep navigation
