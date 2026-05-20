@@ -185,6 +185,32 @@ static std::atomic<bool>  g_mock{false};
 static std::atomic<float> g_focus_mhz{0.0f};  // 0 = sweep mode; >0 = focus on one fc
 static std::string        g_web_dir = "/web";
 
+// ── Tower-finder proxy target (parsed from TOWER_FINDER_URL env var) ─────────
+static std::string g_tf_host        = "api.retina.fm";
+static int         g_tf_port        = 443;
+static bool        g_tf_https       = true;
+static std::string g_tf_path_prefix = "";
+
+static void parse_tower_finder_url(const std::string& url)
+{
+    std::string rest = url;
+    if (rest.substr(0, 8) == "https://") {
+        g_tf_https = true; g_tf_port = 443; rest = rest.substr(8);
+    } else if (rest.substr(0, 7) == "http://") {
+        g_tf_https = false; g_tf_port = 80; rest = rest.substr(7);
+    }
+    auto slash = rest.find('/');
+    std::string host_port = (slash != std::string::npos) ? rest.substr(0, slash) : rest;
+    g_tf_path_prefix      = (slash != std::string::npos) ? rest.substr(slash)    : "";
+    auto colon = host_port.find(':');
+    if (colon != std::string::npos) {
+        g_tf_host = host_port.substr(0, colon);
+        try { g_tf_port = std::stoi(host_port.substr(colon + 1)); } catch (...) {}
+    } else {
+        g_tf_host = host_port;
+    }
+}
+
 // ── SSE helpers ───────────────────────────────────────────────────────────────
 
 // Only output the centre 24 bins (d=20..43) of the 64-bin FFT.
@@ -693,6 +719,13 @@ int main(int argc, char *argv[])
         }
     }
 
+    {
+        const char* tf_env = std::getenv("TOWER_FINDER_URL");
+        std::string tf_url = tf_env ? tf_env : "https://api.retina.fm";
+        parse_tower_finder_url(tf_url);
+        std::cerr << "[retina-spectrum] tower-finder=" << tf_url << std::endl;
+    }
+
     std::cerr << "[retina-spectrum] mock="   << (g_mock ? "yes" : "no")
               << "  tuner="  << (g_tuner == sdrplay_api_Tuner_A ? "A" : "B")
               << "  web-dir=" << g_web_dir
@@ -815,6 +848,42 @@ int main(int argc, char *argv[])
                 std::string heartbeat = ": keepalive\n\n";
                 return sink.write(heartbeat.c_str(), heartbeat.size());
             });
+    });
+
+    // Proxy: forward wizard RF-profile POST to the tower-finder backend.
+    // Target is read from TOWER_FINDER_URL (default: https://api.retina.fm).
+    // HTTP targets work without OpenSSL; HTTPS requires CPPHTTPLIB_OPENSSL_SUPPORT.
+    svr.Post("/api/tower-profile", [](const httplib::Request& req, httplib::Response& res) {
+        const std::string path = g_tf_path_prefix + "/api/towers/profile";
+
+        auto handle = [&](auto& cli) {
+            cli.set_connection_timeout(10);
+            cli.set_read_timeout(15);
+            auto r = cli.Post(path, req.body, "application/json");
+            if (!r) {
+                std::cerr << "[tower-profile] upstream error: "
+                          << httplib::to_string(r.error()) << std::endl;
+                res.status = 502;
+                res.set_content("{\"error\":\"tower-finder unreachable\"}", "application/json");
+                return;
+            }
+            res.status = r->status;
+            res.set_content(r->body, "application/json");
+        };
+
+        if (g_tf_https) {
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+            httplib::SSLClient cli(g_tf_host, g_tf_port);
+            handle(cli);
+#else
+            res.status = 503;
+            res.set_content("{\"error\":\"HTTPS proxy not available (built without OpenSSL)\"}",
+                            "application/json");
+#endif
+        } else {
+            httplib::Client cli(g_tf_host, g_tf_port);
+            handle(cli);
+        }
     });
 
     std::cerr << "[retina-spectrum] listening on :" << HTTP_PORT << std::endl;

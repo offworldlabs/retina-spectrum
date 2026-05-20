@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD 17)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FFTW3F REQUIRED IMPORTED_TARGET fftw3f)
+find_package(OpenSSL)
 
 # cpp-httplib — header-only, fetched at configure time
 include(FetchContent)
@@ -30,6 +31,14 @@ target_link_libraries(retina-spectrum PRIVATE
     PkgConfig::FFTW3F           # fftw3f (includes lib path via imported target)
     pthread
     httplib::httplib)
+
+if(OpenSSL_FOUND)
+    message(STATUS "OpenSSL found — HTTPS proxy to api.retina.fm enabled")
+    target_link_libraries(retina-spectrum PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+    target_compile_definitions(retina-spectrum PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
+else()
+    message(STATUS "OpenSSL not found — tower-profile proxy will return 503")
+endif()
 
 if(MOCK_ONLY)
     target_compile_definitions(retina-spectrum PRIVATE MOCK_ONLY)

@@ -218,6 +218,45 @@ body {
 .hw-item.warn .hw-icon { background: oklch(0.75 0.14 75);  color: #fff; }
 .hw-text-main { font-weight: 500; }
 .hw-text-sub  { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+
+/* ── Location row ─────────────────────────────────────────────────────── */
+.loc-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px;
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--surface-2); font-size: 13px;
+}
+.loc-label { color: var(--ink-2); white-space: nowrap; }
+.loc-input {
+  width: 120px; padding: 5px 8px;
+  border: 1px solid var(--line); border-radius: 6px;
+  font: inherit; font-size: 13px; background: var(--surface); color: var(--ink);
+}
+.loc-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+.loc-input.invalid { border-color: oklch(0.65 0.18 25); }
+.loc-hint { font-size: 11.5px; color: var(--ink-3); }
+
+/* ── Tower results panel ─────────────────────────────────────────────── */
+.res-card { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); overflow: hidden; }
+.res-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.res-table th, .res-table td { text-align: left; padding: 8px 14px; border-bottom: 1px solid var(--line-2); }
+.res-table tbody tr:last-child td { border-bottom: 0; }
+.res-table th {
+  font-weight: 500; color: var(--ink-3); font-size: 11.5px;
+  text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface-2);
+}
+.res-table .num { text-align: right; }
+.res-matched { background: oklch(0.992 0.008 155); }
+.res-sub-name { font-size: 11.5px; color: var(--ink-3); margin-top: 1px; }
+.res-summary { font-size: 13.5px; color: var(--ink-2); margin: 0 0 12px; }
+.res-summary strong { color: var(--ink); }
+
+/* ── Inline send error ───────────────────────────────────────────────── */
+.tf-error {
+  font-size: 12.5px; color: oklch(0.50 0.18 25); padding: 8px 12px;
+  background: oklch(0.99 0.01 25); border: 1px solid oklch(0.90 0.06 25);
+  border-radius: var(--r-sm);
+}
 </style>
 </head>
 <body>
@@ -356,9 +395,26 @@ body {
           </div>
           <div>
             <div class="v1-ok-title" id="ok-title">Looking good — 0 potential transmitters</div>
-            <div class="v1-ok-sub">Send the RF profile when you continue.</div>
+            <div class="v1-ok-sub">Enter your node location below, then send the RF profile.</div>
           </div>
         </div>
+
+        <!-- Location inputs — shown when scan is complete -->
+        <div id="loc-row" class="loc-row" style="display:none">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+               style="flex-shrink:0;color:var(--ink-3)">
+            <path d="M12 22s-8-4.5-8-11.8A8 8 0 0 1 12 2a8 8 0 0 1 8 8.2c0 7.3-8 11.8-8 11.8z"/>
+            <circle cx="12" cy="10" r="3"/>
+          </svg>
+          <span class="loc-label">Node location</span>
+          <input id="inp-lat" class="loc-input mono" type="number" step="0.0001"
+                 placeholder="Latitude" min="-90" max="90">
+          <input id="inp-lon" class="loc-input mono" type="number" step="0.0001"
+                 placeholder="Longitude" min="-180" max="180">
+          <span class="loc-hint">Required to match transmitters</span>
+        </div>
+        <div id="tf-error" class="tf-error" style="display:none"></div>
 
       </div><!-- .v2 -->
     </div><!-- .wiz-content -->
@@ -375,10 +431,31 @@ body {
       <span class="spinner"></span> Scanning…
     </button>
     <button id="btn-rescan"   class="btn ghost"    style="display:none" onclick="rescan()">Rescan</button>
-    <button id="btn-next"     class="btn primary"  style="display:none">
+    <button id="btn-next"     class="btn primary"  style="display:none" onclick="sendRfProfile()">
       Send RF profile
       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 18l6-6-6-6"/></svg>
     </button>
+  </div>
+</div>
+
+<!-- ── Step 3: Tower Finder Results ─────────────────────────────────────── -->
+<div id="step-results" class="wiz" style="display:none">
+  <div class="wiz-body">
+    <div class="wiz-title-row">
+      <h1 class="wiz-title">Transmitters identified</h1>
+      <p class="wiz-sub" id="res-sub">Matched your RF profile against nearby broadcast towers.</p>
+    </div>
+    <div class="wiz-content">
+      <div id="res-panel" class="res-card"></div>
+    </div>
+  </div>
+  <div class="wiz-foot">
+    <button class="btn ghost" onclick="backFromResults()">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 18l-6-6 6-6"/></svg>
+      Back
+    </button>
+    <div class="foot-spacer"></div>
+    <button class="btn ghost" onclick="rescanFromResults()">Rescan</button>
   </div>
 </div>
 
@@ -730,6 +807,7 @@ function processChannel(ch) {
       fc_mhz: ch.fc_mhz, freq_label: ch.fc_mhz.toFixed(1) + ' MHz',
       snr_db: ch.snr_db, power_db: null, obw_khz: obwKhz,
       marker_fc: ch.fc_mhz, marker_pwr: null,
+      score: ch.score ?? null, obw_fraction: ch.obw_fraction ?? null,
     });
   } else {
     // TV — require pilot peak confirmed
@@ -741,6 +819,7 @@ function processChannel(ch) {
       fc_mhz: ch.fc_mhz, freq_label: 'Ch ' + ch.number + ' · ' + ch.fc_mhz.toFixed(0) + ' MHz',
       snr_db: null, power_db: pilot.power_db, obw_khz: null,
       marker_fc: pilot.freq_mhz, marker_pwr: pilot.power_db,
+      score: ch.score ?? null, obw_fraction: null,
     });
   }
 
@@ -780,6 +859,7 @@ function startScan() {
   phase = 'waiting';
   clearMarkers();
   updateChart();
+  resetSendBtn();
   showScanStep();
   updateScanUI();
 }
@@ -791,6 +871,7 @@ function rescan() {
   phase = 'waiting';
   clearMarkers();
   updateChart();
+  resetSendBtn();
   updateScanUI();
 }
 
@@ -815,6 +896,7 @@ function updateCursorUI() {
 function updateScanUI() {
   const preMsgEl   = document.getElementById('pre-msg');
   const advSection = document.getElementById('adv-section');
+  const locRow     = document.getElementById('loc-row');
   const okBanner   = document.getElementById('ok-banner');
   const warnBanner = document.getElementById('warn-banner');
   const btnIdle    = document.getElementById('btn-scan-idle');
@@ -830,6 +912,7 @@ function updateScanUI() {
     advSection.style.display = 'none';
     okBanner.style.display  = 'none';
     warnBanner.style.display = 'none';
+    locRow.style.display    = 'none';
     btnIdle.style.display   = phase === 'idle' ? '' : 'none';
     btnScanning.style.display = phase === 'connecting' ? '' : 'none';
     btnRescan.style.display = 'none';
@@ -844,6 +927,7 @@ function updateScanUI() {
     advSection.style.display = 'none';
     okBanner.style.display   = 'none';
     warnBanner.style.display = 'none';
+    locRow.style.display     = 'none';
     btnIdle.style.display    = 'none';
     btnScanning.style.display = '';
     btnRescan.style.display  = 'none';
@@ -857,6 +941,7 @@ function updateScanUI() {
     advSection.style.display = '';
     okBanner.style.display   = 'none';
     warnBanner.style.display = 'none';
+    locRow.style.display     = 'none';
     btnIdle.style.display    = 'none';
     btnScanning.style.display = '';
     btnRescan.style.display  = 'none';
@@ -868,6 +953,7 @@ function updateScanUI() {
     advSection.style.display = '';
     okBanner.style.display   = tvFound ? '' : 'none';
     warnBanner.style.display = tvFound ? 'none' : '';
+    locRow.style.display     = '';
     btnIdle.style.display    = 'none';
     btnScanning.style.display = 'none';
     btnRescan.style.display  = '';
@@ -919,8 +1005,143 @@ function toggleAdv() {
   btn.setAttribute('aria-expanded', advOpen);
 }
 
+// ── Tower Finder integration ──────────────────────────────────────────────
+
+const SEND_BTN_IDLE_HTML =
+  'Send RF profile <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 18l6-6-6-6"/></svg>';
+
+function resetSendBtn() {
+  const btn = document.getElementById('btn-next');
+  btn.disabled = false;
+  btn.innerHTML = SEND_BTN_IDLE_HTML;
+  document.getElementById('tf-error').style.display = 'none';
+}
+
+function loadLocation() {
+  const lat = localStorage.getItem('rsp_lat');
+  const lon = localStorage.getItem('rsp_lon');
+  if (lat) document.getElementById('inp-lat').value = lat;
+  if (lon) document.getElementById('inp-lon').value = lon;
+}
+
+async function sendRfProfile() {
+  const latEl = document.getElementById('inp-lat');
+  const lonEl = document.getElementById('inp-lon');
+  const lat   = parseFloat(latEl.value);
+  const lon   = parseFloat(lonEl.value);
+
+  latEl.classList.remove('invalid');
+  lonEl.classList.remove('invalid');
+
+  let valid = true;
+  if (isNaN(lat) || lat < -90  || lat > 90)  { latEl.classList.add('invalid'); latEl.focus(); valid = false; }
+  if (isNaN(lon) || lon < -180 || lon > 180) { lonEl.classList.add('invalid'); if (valid) lonEl.focus(); valid = false; }
+  if (!valid) return;
+
+  localStorage.setItem('rsp_lat', lat);
+  localStorage.setItem('rsp_lon', lon);
+
+  const measurements = detected.map(d => ({
+    freq_mhz:     d.fc_mhz,
+    snr_db:       d.snr_db,
+    obw_fraction: d.obw_fraction,
+    score:        d.score,
+    power_db:     d.power_db,
+    band:         d.band_id,
+  }));
+
+  const btnNext = document.getElementById('btn-next');
+  const errEl   = document.getElementById('tf-error');
+  btnNext.disabled = true;
+  btnNext.innerHTML = '<span class="spinner"></span> Sending…';
+  errEl.style.display = 'none';
+
+  try {
+    const resp = await fetch('/api/tower-profile', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ lat, lon, measurements }),
+    });
+    if (!resp.ok) {
+      const msg = await resp.text().catch(() => '');
+      throw new Error('HTTP ' + resp.status + (msg ? ': ' + msg : ''));
+    }
+    const data = await resp.json();
+    showResults(data);
+  } catch (err) {
+    resetSendBtn();
+    errEl.textContent   = 'Could not reach Tower Finder — ' + err.message;
+    errEl.style.display = '';
+  }
+}
+
+function showResults(data) {
+  const towers  = data.towers || [];
+  const matched = towers.filter(t => t.frequency_matched).length;
+  document.getElementById('res-sub').textContent =
+    matched + ' of ' + towers.length + ' nearby transmitters matched your RF profile';
+  renderTowerResults(towers);
+  document.getElementById('step-scan').style.display    = 'none';
+  document.getElementById('step-results').style.display = '';
+}
+
+function renderTowerResults(towers) {
+  const panel = document.getElementById('res-panel');
+  if (towers.length === 0) {
+    panel.innerHTML =
+      '<div class="v2-warn" style="margin:16px;border-radius:var(--r-md)">' +
+      '<div class="v1-warn-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg></div>' +
+      '<div><div class="v1-ok-title">No towers found nearby</div>' +
+      '<div class="v1-ok-sub">Check your coordinates or try a larger search radius.</div></div></div>';
+    return;
+  }
+
+  const BAND_COLOR = { FM: '#3B82F6', VHF: '#8B5CF6', UHF: '#EC4899' };
+  let html =
+    '<table class="res-table"><thead><tr>' +
+    '<th>#</th><th>Callsign</th><th>Band</th>' +
+    '<th class="num">Freq</th><th class="num">Distance</th>' +
+    '<th class="num">Bearing</th><th class="num">Rx Power</th>' +
+    '<th class="num">Meas. SNR</th>' +
+    '</tr></thead><tbody>';
+
+  for (const t of towers) {
+    const col     = BAND_COLOR[t.band] || '#6B7280';
+    const measSnr = t.measured_snr_db != null
+      ? t.measured_snr_db.toFixed(1) + ' dB'
+      : (t.frequency_matched ? '—' : '');
+    html +=
+      '<tr class="' + (t.frequency_matched ? 'res-matched' : '') + '">' +
+      '<td class="mono">' + (t.rank || '—') + '</td>' +
+      '<td><strong>' + (t.callsign || '—') + '</strong>' +
+        (t.name ? '<div class="res-sub-name">' + t.name + '</div>' : '') + '</td>' +
+      '<td><span class="adv-bdot" style="background:' + col + '"></span>' + t.band + '</td>' +
+      '<td class="num mono">' + t.frequency_mhz.toFixed(1) + ' MHz</td>' +
+      '<td class="num mono">' + t.distance_km + ' km</td>' +
+      '<td class="num mono">' + t.bearing_deg + '° ' + t.bearing_cardinal + '</td>' +
+      '<td class="num mono">' + t.received_power_dbm + ' dBm</td>' +
+      '<td class="num mono">' + (measSnr || '—') + '</td>' +
+      '</tr>';
+  }
+  html += '</tbody></table>';
+  panel.innerHTML = html;
+}
+
+function backFromResults() {
+  document.getElementById('step-results').style.display = 'none';
+  document.getElementById('step-scan').style.display    = '';
+  resetSendBtn();
+}
+
+function rescanFromResults() {
+  document.getElementById('step-results').style.display = 'none';
+  document.getElementById('step-scan').style.display    = '';
+  rescan();
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────
 initChart();
+loadLocation();
 connectSSE();
 </script>
 </body>
