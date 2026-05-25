@@ -854,7 +854,7 @@ int main(int argc, char *argv[])
     // Target is read from TOWER_FINDER_URL (default: https://api.retina.fm).
     // HTTP targets work without OpenSSL; HTTPS requires CPPHTTPLIB_OPENSSL_SUPPORT.
     svr.Post("/api/tower-profile", [](const httplib::Request& req, httplib::Response& res) {
-        const std::string path = g_tf_path_prefix + "/api/towers/profile";
+        const std::string path = g_tf_path_prefix + "/api/towers";
 
         auto handle = [&](auto& cli) {
             cli.set_connection_timeout(10);

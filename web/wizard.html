@@ -1024,6 +1024,13 @@ function loadLocation() {
   if (lon) document.getElementById('inp-lon').value = lon;
 }
 
+function normaliseBand(id) {
+  if (id === 'fm')                         return 'FM';
+  if (id === 'vhf_hi' || id === 'vhf_lo') return 'VHF';
+  if (id === 'uhf')                        return 'UHF';
+  return id.toUpperCase();
+}
+
 async function sendRfProfile() {
   const latEl = document.getElementById('inp-lat');
   const lonEl = document.getElementById('inp-lon');
@@ -1047,7 +1054,7 @@ async function sendRfProfile() {
     obw_fraction: d.obw_fraction,
     score:        d.score,
     power_db:     d.power_db,
-    band:         d.band_id,
+    band:         normaliseBand(d.band_id),
   }));
 
   const btnNext = document.getElementById('btn-next');
@@ -1107,8 +1114,8 @@ function renderTowerResults(towers) {
 
   for (const t of towers) {
     const col     = BAND_COLOR[t.band] || '#6B7280';
-    const measSnr = t.measured_snr_db != null
-      ? t.measured_snr_db.toFixed(1) + ' dB'
+    const measSnr = t.snr_db != null
+      ? t.snr_db.toFixed(1) + ' dB'
       : (t.frequency_matched ? '—' : '');
     html +=
       '<tr class="' + (t.frequency_matched ? 'res-matched' : '') + '">' +
