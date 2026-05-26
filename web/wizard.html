@@ -1083,10 +1083,10 @@ async function sendRfProfile() {
 }
 
 function showResults(data) {
-  const towers  = data.towers || [];
-  const matched = towers.filter(t => t.frequency_matched).length;
+  const towers = data.towers || [];
+  const n = towers.length;
   document.getElementById('res-sub').textContent =
-    matched + ' of ' + towers.length + ' nearby transmitters matched your RF profile';
+    n === 1 ? '1 matched tower' : n + ' matched towers';
   renderTowerResults(towers);
   document.getElementById('step-scan').style.display    = 'none';
   document.getElementById('step-results').style.display = '';
