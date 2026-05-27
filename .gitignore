@@ -2,3 +2,4 @@ build/
 build-mac/
 build-mock/
 build-wsl/
+*:Zone.Identifier
