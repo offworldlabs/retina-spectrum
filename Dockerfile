@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
     git \
     libfftw3-dev \
+    libssl-dev \
     pkg-config \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -35,6 +36,7 @@ FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libfftw3-single3 \
+    libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/build/retina-spectrum        /usr/local/bin/retina-spectrum

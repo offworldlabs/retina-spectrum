@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <iostream>
 #include <mutex>
 #include <queue>
@@ -182,8 +183,35 @@ struct SweepState {
 static SweepState        g_state;
 static std::thread       g_sweep_thread;
 static std::atomic<bool>  g_mock{false};
+static std::string        g_replay_file = "";  // non-empty → replay mode
 static std::atomic<float> g_focus_mhz{0.0f};  // 0 = sweep mode; >0 = focus on one fc
 static std::string        g_web_dir = "/web";
+
+// ── Tower-finder proxy target (parsed from TOWER_FINDER_URL env var) ─────────
+static std::string g_tf_host        = "api.retina.fm";
+static int         g_tf_port        = 443;
+static bool        g_tf_https       = true;
+static std::string g_tf_path_prefix = "";
+
+static void parse_tower_finder_url(const std::string& url)
+{
+    std::string rest = url;
+    if (rest.substr(0, 8) == "https://") {
+        g_tf_https = true; g_tf_port = 443; rest = rest.substr(8);
+    } else if (rest.substr(0, 7) == "http://") {
+        g_tf_https = false; g_tf_port = 80; rest = rest.substr(7);
+    }
+    auto slash = rest.find('/');
+    std::string host_port = (slash != std::string::npos) ? rest.substr(0, slash) : rest;
+    g_tf_path_prefix      = (slash != std::string::npos) ? rest.substr(slash)    : "";
+    auto colon = host_port.find(':');
+    if (colon != std::string::npos) {
+        g_tf_host = host_port.substr(0, colon);
+        try { g_tf_port = std::stoi(host_port.substr(colon + 1)); } catch (...) {}
+    } else {
+        g_tf_host = host_port;
+    }
+}
 
 // ── SSE helpers ───────────────────────────────────────────────────────────────
 
@@ -374,8 +402,90 @@ static std::vector<std::complex<float>> mock_iq(float fc_mhz)
 
 // ── Sweep thread ──────────────────────────────────────────────────────────────
 
+// ── Replay mode ───────────────────────────────────────────────────────────────
+// Reads a sweep-events.ndjson file and replays it through the SSE stream.
+// Deduplicates on step number (last occurrence wins) so files containing a
+// partial sweep followed by a full sweep replay cleanly as a single pass.
+
+static constexpr int REPLAY_STEP_MS = 150;   // ms between steps (~17 s for 69 steps)
+static constexpr int REPLAY_LOOP_MS = 2000;  // ms pause before looping
+
+static void replay_fn()
+{
+    std::cerr << "[replay] loading " << g_replay_file << std::endl;
+
+    // Build step map: step_num → raw SSE data line (later entries overwrite)
+    std::map<int, std::string> step_map;
+    {
+        std::ifstream f(g_replay_file);
+        if (!f) {
+            std::cerr << "[replay] ERROR: cannot open " << g_replay_file << std::endl;
+            return;
+        }
+        std::string line;
+        while (std::getline(f, line)) {
+            if (line.find("\"type\":\"step\"") == std::string::npos) continue;
+            auto pos = line.find("\"step\":");
+            if (pos == std::string::npos) continue;
+            int step_num = -1;
+            try { step_num = std::stoi(line.substr(pos + 7)); } catch (...) { continue; }
+            step_map[step_num] = line;
+        }
+    }
+
+    if (step_map.empty()) {
+        std::cerr << "[replay] ERROR: no step events found in " << g_replay_file << std::endl;
+        return;
+    }
+
+    // Flatten to sorted vector (map iteration order is by key)
+    std::vector<std::pair<int, std::string>> steps(step_map.begin(), step_map.end());
+    int total = (int)steps.size();
+    std::cerr << "[replay] " << total << " unique steps — looping at "
+              << REPLAY_STEP_MS << " ms/step" << std::endl;
+
+    {
+        std::lock_guard<std::mutex> lk(g_state.mtx);
+        g_state.buffer.assign(total, Slice{});
+    }
+
+    while (true)
+    {
+        sse_broadcast("data: {\"type\":\"start\",\"mode\":\"sweep\"}\n\n");
+        {
+            std::lock_guard<std::mutex> lk(g_state.mtx);
+            g_state.state        = "sweeping";
+            g_state.progress_pct = 0;
+        }
+
+        for (int i = 0; i < total; i++) {
+            sse_broadcast(steps[i].second + "\n\n");
+            {
+                std::lock_guard<std::mutex> lk(g_state.mtx);
+                g_state.progress_pct = (i + 1) * 100 / total;
+            }
+            std::cerr << "[replay] step " << (i + 1) << "/" << total
+                      << "  (step " << steps[i].first << ")" << std::endl;
+            std::this_thread::sleep_for(std::chrono::milliseconds(REPLAY_STEP_MS));
+        }
+
+        {
+            std::lock_guard<std::mutex> lk(g_state.mtx);
+            g_state.state = "complete";
+        }
+        sse_broadcast("data: {\"type\":\"complete\"}\n\n");
+        std::cerr << "[replay] complete — looping in " << REPLAY_LOOP_MS << " ms" << std::endl;
+        std::this_thread::sleep_for(std::chrono::milliseconds(REPLAY_LOOP_MS));
+    }
+}
+
 static void sweep_fn()
 {
+    if (!g_replay_file.empty()) {
+        replay_fn();
+        return;
+    }
+
     // Linear-domain ring buffers — one per sweep step, one for focus mode.
     // Replace all EMA paths: display and metrics share one averaged spectrum.
     std::vector<SpectrumRing> sweep_rings;
@@ -673,6 +783,8 @@ int main(int argc, char *argv[])
         std::string arg = argv[i];
         if (arg == "--mock") {
             g_mock = true;
+        } else if (arg == "--replay" && i + 1 < argc) {
+            g_replay_file = argv[++i];
         } else if (arg == "--tuner" && i + 1 < argc) {
             std::string t = argv[++i];
             if (t == "B" || t == "b") {
@@ -688,17 +800,25 @@ int main(int argc, char *argv[])
         } else if (arg == "--web-dir" && i + 1 < argc) {
             g_web_dir = argv[++i];
         } else {
-            std::cerr << "Usage: retina-spectrum [--mock] [--tuner A|B] [--web-dir path]" << std::endl;
+            std::cerr << "Usage: retina-spectrum [--mock] [--replay <file>] [--tuner A|B] [--web-dir path]" << std::endl;
             return 1;
         }
     }
 
+    {
+        const char* tf_env = std::getenv("TOWER_FINDER_URL");
+        std::string tf_url = tf_env ? tf_env : "https://api.retina.fm";
+        parse_tower_finder_url(tf_url);
+        std::cerr << "[retina-spectrum] tower-finder=" << tf_url << std::endl;
+    }
+
     std::cerr << "[retina-spectrum] mock="   << (g_mock ? "yes" : "no")
+              << "  replay=" << (g_replay_file.empty() ? "no" : g_replay_file)
               << "  tuner="  << (g_tuner == sdrplay_api_Tuner_A ? "A" : "B")
               << "  web-dir=" << g_web_dir
               << "  port="   << HTTP_PORT << std::endl;
 
-    if (!g_mock) {
+    if (!g_mock && g_replay_file.empty()) {
         while (true) {
             if (open_api() && get_device()) break;
             std::cerr << "[sdr] device not ready, retrying in 5 s..." << std::endl;
@@ -815,6 +935,42 @@ int main(int argc, char *argv[])
                 std::string heartbeat = ": keepalive\n\n";
                 return sink.write(heartbeat.c_str(), heartbeat.size());
             });
+    });
+
+    // Proxy: forward wizard RF-profile POST to the tower-finder backend.
+    // Target is read from TOWER_FINDER_URL (default: https://api.retina.fm).
+    // HTTP targets work without OpenSSL; HTTPS requires CPPHTTPLIB_OPENSSL_SUPPORT.
+    svr.Post("/api/tower-profile", [](const httplib::Request& req, httplib::Response& res) {
+        const std::string path = g_tf_path_prefix + "/api/towers";
+
+        auto handle = [&](auto& cli) {
+            cli.set_connection_timeout(10);
+            cli.set_read_timeout(15);
+            auto r = cli.Post(path, req.body, "application/json");
+            if (!r) {
+                std::cerr << "[tower-profile] upstream error: "
+                          << httplib::to_string(r.error()) << std::endl;
+                res.status = 502;
+                res.set_content("{\"error\":\"tower-finder unreachable\"}", "application/json");
+                return;
+            }
+            res.status = r->status;
+            res.set_content(r->body, "application/json");
+        };
+
+        if (g_tf_https) {
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+            httplib::SSLClient cli(g_tf_host, g_tf_port);
+            handle(cli);
+#else
+            res.status = 503;
+            res.set_content("{\"error\":\"HTTPS proxy not available (built without OpenSSL)\"}",
+                            "application/json");
+#endif
+        } else {
+            httplib::Client cli(g_tf_host, g_tf_port);
+            handle(cli);
+        }
     });
 
     std::cerr << "[retina-spectrum] listening on :" << HTTP_PORT << std::endl;
