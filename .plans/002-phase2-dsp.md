@@ -575,4 +575,4 @@ HTTP threads (httplib thread pool)
 - Peak detection: noise floor = median(all bins), threshold = floor + 10 dB,
   local maxima, merge within 1 MHz, classify by band, snap UHF to DVB-T channels
 - `/api/peaks` endpoint for retina-gui onboarding integration
-- "Use these frequencies" button in UI → passes peaks to Tower-Finder
+- "Use these frequencies" button in UI → passes peaks to retina-server
