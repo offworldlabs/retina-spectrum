@@ -10,6 +10,9 @@ services:
       - /dev/bus/usb:/dev/bus/usb:rw
       # .so and sdrplay_apiService are baked into the image (from blah2-arm/lib/sdrplay-3.15.2/arm64/)
       # No host bind-mounts needed — version is pinned at build time, matches blah2-arm exactly.
-    # Kill any stale sdrplay_apiService on the host before launch (pid:host lets us reach host processes).
-    # Mirrors blah2's sdrplay-restart.sh — library auto-starts a fresh instance on open.
-    command: bash -c "pkill -9 -f sdrplay_apiService 2>/dev/null || true && sleep 2 && retina-spectrum --web-dir /web"
+    # No SDRplay service kill before launch. The one that was here never ran: the
+    # image has no pkill. A working `pkill -f` on that name would also have
+    # killed this shell, whose command line contains it. On a node, the host
+    # side (retina-gui, the watchdog) resets the service; see the README's
+    # troubleshooting section to do it by hand.
+    command: bash -c "sleep 2 && retina-spectrum --web-dir /web"

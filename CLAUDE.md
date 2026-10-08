@@ -31,7 +31,7 @@ It is a **standalone service**, separate from the main radar stack (retina-node 
 
 ## Deployment
 
-Runs as a Docker container on Raspberry Pi. Requires `network_mode: host`, `pid: host`, and `privileged: true` for SDRplay shared memory and USB access. Startup command kills any stale `sdrplay_apiService` before claiming the RSP.
+Runs as a Docker container on Raspberry Pi. Requires `network_mode: host`, `pid: host`, and `privileged: true` for SDRplay shared memory and USB access. The startup command does not touch `sdrplay_apiService`: on a node, retina-gui and the watchdog reset it, and the README's troubleshooting section covers doing it by hand.
 
 Exposed publicly via Cloudflare Tunnel at `spectrumx.retnode.com`.
 
